@@ -4,7 +4,9 @@
   },
   "buttons": {
     "send": "Send",
+    "submit": "Submit",
     "cancel": "Cancel",
+    "close": "Close",
     "save": "Save",
     "delete": "Delete",
     "allow": "Allow",

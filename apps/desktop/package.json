@@ -129,6 +129,10 @@
         "to": "icon.png"
       },
       {
+        "from": "locales",
+        "to": "locales"
+      },
+      {
         "from": "skills",
         "to": "skills",
         "filter": [

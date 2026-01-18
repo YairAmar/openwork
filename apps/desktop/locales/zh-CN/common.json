@@ -4,7 +4,9 @@
   },
   "buttons": {
     "send": "发送",
+    "submit": "提交",
     "cancel": "取消",
+    "close": "关闭",
     "save": "保存",
     "delete": "删除",
     "allow": "允许",

@@ -13,7 +13,10 @@
     "notFound": "Task not found",
     "startFailed": "Failed to start task",
     "cancelFailed": "Failed to cancel task",
-    "taskFailed": "Task failed"
+    "taskFailed": "Task failed",
+    "noActiveTask": "No active task to continue",
+    "noSession": "No session to continue - please start a new task",
+    "sendMessageFailed": "Failed to send message"
   },
   "adapter": {
     "cliNotFound": "OpenCode CLI is not available. The bundled CLI may be missing or corrupted. Please reinstall the application.",

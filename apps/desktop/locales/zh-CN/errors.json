@@ -13,7 +13,10 @@
     "notFound": "任务未找到",
     "startFailed": "启动任务失败",
     "cancelFailed": "取消任务失败",
-    "taskFailed": "任务失败"
+    "taskFailed": "任务失败",
+    "noActiveTask": "没有活动的任务可以继续",
+    "noSession": "没有可继续的会话 - 请开始新任务",
+    "sendMessageFailed": "发送消息失败"
   },
   "adapter": {
     "cliNotFound": "OpenCode CLI 不可用。捆绑的 CLI 可能丢失或损坏。请重新安装应用程序。",
