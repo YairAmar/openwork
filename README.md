@@ -1,5 +1,5 @@
 <p align="center">
-  <strong>English</strong> | <a href="docs/README.zh.md">中文</a> | <a href="https://github.com/accomplish-ai/openwork">Repository Home</a>
+  <a href="https://github.com/accomplish-ai/openwork">English</a> | <a href="docs/README.zh.md">中文</a>
 </p>
 
 <p align="center">
