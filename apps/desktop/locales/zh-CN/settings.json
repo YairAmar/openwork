@@ -37,7 +37,7 @@
     "connected": "已连接 - {{count}} 个模型可用",
     "selectModel": "选择模型",
     "useThisModel": "使用此模型",
-    "helpText": "请确保已安装并运行 Ollama，然后点击测试连接。",
+    "helpText": "请确保已安装并运行 <link>Ollama</link>，然后点击测试连接。",
     "currentlyUsing": "当前使用"
   },
   "bedrock": {

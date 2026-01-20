@@ -2,7 +2,7 @@ import { app } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { PERMISSION_API_PORT, QUESTION_API_PORT } from '../permission-api';
-import { getOllamaConfig } from '../store/appSettings';
+import { getOllamaConfig, getLiteLLMConfig } from '../store/appSettings';
 import { getApiKey } from '../store/secureStorage';
 import type { BedrockCredentials } from '@accomplish/shared';
 
@@ -351,7 +351,50 @@ interface BedrockProviderConfig {
   };
 }
 
-type ProviderConfig = OllamaProviderConfig | BedrockProviderConfig;
+interface OpenRouterProviderModelConfig {
+  name: string;
+  tools?: boolean;
+}
+
+interface OpenRouterProviderConfig {
+  npm: string;
+  name: string;
+  options: {
+    baseURL: string;
+  };
+  models: Record<string, OpenRouterProviderModelConfig>;
+}
+
+interface LiteLLMProviderModelConfig {
+  name: string;
+  tools?: boolean;
+}
+
+interface LiteLLMProviderConfig {
+  npm: string;
+  name: string;
+  options: {
+    baseURL: string;
+    apiKey?: string;
+  };
+  models: Record<string, LiteLLMProviderModelConfig>;
+}
+
+interface ZaiProviderModelConfig {
+  name: string;
+  tools?: boolean;
+}
+
+interface ZaiProviderConfig {
+  npm: string;
+  name: string;
+  options: {
+    baseURL: string;
+  };
+  models: Record<string, ZaiProviderModelConfig>;
+}
+
+type ProviderConfig = OllamaProviderConfig | BedrockProviderConfig | OpenRouterProviderConfig | LiteLLMProviderConfig | ZaiProviderConfig;
 
 interface OpenCodeConfig {
   $schema?: string;
@@ -391,12 +434,17 @@ export async function generateOpenCodeConfig(): Promise<string> {
   // Build file-permission MCP server command
   const filePermissionServerPath = path.join(skillsPath, 'file-permission', 'src', 'index.ts');
 
-  // Enable providers - add ollama if configured
+  // Enable providers - add ollama and litellm if configured
   const ollamaConfig = getOllamaConfig();
-  const baseProviders = ['anthropic', 'openai', 'google', 'xai', 'deepseek', 'zai-coding-plan', 'amazon-bedrock'];
-  const enabledProviders = ollamaConfig?.enabled
-    ? [...baseProviders, 'ollama']
-    : baseProviders;
+  const litellmConfig = getLiteLLMConfig();
+  const baseProviders = ['anthropic', 'openai', 'openrouter', 'google', 'xai', 'deepseek', 'zai-coding-plan', 'amazon-bedrock'];
+  let enabledProviders = [...baseProviders];
+  if (ollamaConfig?.enabled) {
+    enabledProviders.push('ollama');
+  }
+  if (litellmConfig?.enabled) {
+    enabledProviders.push('litellm');
+  }
 
   // Build provider configurations
   const providerConfig: Record<string, ProviderConfig> = {};
@@ -423,6 +471,39 @@ export async function generateOpenCodeConfig(): Promise<string> {
     console.log('[OpenCode Config] Ollama provider configured with models:', Object.keys(ollamaModels));
   }
 
+  // Add OpenRouter provider configuration if API key is set
+  const openrouterKey = getApiKey('openrouter');
+  if (openrouterKey) {
+    // Get the selected model to configure OpenRouter
+    const { getSelectedModel } = await import('../store/appSettings');
+    const selectedModel = getSelectedModel();
+
+    const openrouterModels: Record<string, OpenRouterProviderModelConfig> = {};
+
+    // If a model is selected via OpenRouter, add it to the config
+    if (selectedModel?.provider === 'openrouter' && selectedModel.model) {
+      // Extract model ID from full ID (e.g., "openrouter/anthropic/claude-3.5-sonnet" -> "anthropic/claude-3.5-sonnet")
+      const modelId = selectedModel.model.replace('openrouter/', '');
+      openrouterModels[modelId] = {
+        name: modelId,
+        tools: true,
+      };
+    }
+
+    // Only configure OpenRouter if we have at least one model
+    if (Object.keys(openrouterModels).length > 0) {
+      providerConfig.openrouter = {
+        npm: '@ai-sdk/openai-compatible',
+        name: 'OpenRouter',
+        options: {
+          baseURL: 'https://openrouter.ai/api/v1',
+        },
+        models: openrouterModels,
+      };
+      console.log('[OpenCode Config] OpenRouter provider configured with model:', Object.keys(openrouterModels));
+    }
+  }
+
   // Add Bedrock provider configuration if credentials are stored
   const bedrockCredsJson = getApiKey('bedrock');
   if (bedrockCredsJson) {
@@ -446,6 +527,72 @@ export async function generateOpenCodeConfig(): Promise<string> {
     } catch (e) {
       console.warn('[OpenCode Config] Failed to parse Bedrock credentials:', e);
     }
+  }
+
+  // Add LiteLLM provider configuration if enabled
+  if (litellmConfig?.enabled && litellmConfig.baseUrl) {
+    // Get the selected model to configure LiteLLM
+    const { getSelectedModel } = await import('../store/appSettings');
+    const selectedModel = getSelectedModel();
+
+    const litellmModels: Record<string, LiteLLMProviderModelConfig> = {};
+
+    // If a model is selected via LiteLLM, add it to the config
+    if (selectedModel?.provider === 'litellm' && selectedModel.model) {
+      // Extract model ID from full ID (e.g., "litellm/openai/gpt-4" -> "openai/gpt-4")
+      const modelId = selectedModel.model.replace('litellm/', '');
+      litellmModels[modelId] = {
+        name: modelId,
+        tools: true,
+      };
+    }
+
+    // Only configure LiteLLM if we have at least one model
+    if (Object.keys(litellmModels).length > 0) {
+      // Get LiteLLM API key if configured
+      const litellmApiKey = getApiKey('litellm');
+      
+      const litellmOptions: LiteLLMProviderConfig['options'] = {
+        baseURL: `${litellmConfig.baseUrl}/v1`,
+      };
+      
+      // Add API key to options if available
+      if (litellmApiKey) {
+        litellmOptions.apiKey = litellmApiKey;
+        console.log('[OpenCode Config] LiteLLM API key configured');
+      }
+      
+      providerConfig.litellm = {
+        npm: '@ai-sdk/openai-compatible',
+        name: 'LiteLLM',
+        options: litellmOptions,
+        models: litellmModels,
+      };
+      console.log('[OpenCode Config] LiteLLM provider configured with model:', Object.keys(litellmModels));
+    }
+  }
+
+  // Add Z.AI Coding Plan provider configuration with all supported models
+  // This is needed because OpenCode's built-in zai-coding-plan provider may not have all models
+  const zaiKey = getApiKey('zai');
+  if (zaiKey) {
+    const zaiModels: Record<string, ZaiProviderModelConfig> = {
+      'glm-4.7-flashx': { name: 'GLM-4.7 FlashX (Latest)', tools: true },
+      'glm-4.7': { name: 'GLM-4.7', tools: true },
+      'glm-4.7-flash': { name: 'GLM-4.7 Flash', tools: true },
+      'glm-4.6': { name: 'GLM-4.6', tools: true },
+      'glm-4.5-flash': { name: 'GLM-4.5 Flash', tools: true },
+    };
+
+    providerConfig['zai-coding-plan'] = {
+      npm: '@ai-sdk/openai-compatible',
+      name: 'Z.AI Coding Plan',
+      options: {
+        baseURL: 'https://open.bigmodel.cn/api/paas/v4',
+      },
+      models: zaiModels,
+    };
+    console.log('[OpenCode Config] Z.AI Coding Plan provider configured with models:', Object.keys(zaiModels));
   }
 
   const config: OpenCodeConfig = {

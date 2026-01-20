@@ -1,5 +1,5 @@
 import Store from 'electron-store';
-import type { SelectedModel, OllamaConfig } from '@accomplish/shared';
+import type { SelectedModel, OllamaConfig, LiteLLMConfig } from '@accomplish/shared';
 
 /** Supported UI languages */
 export type UILanguage = 'en' | 'zh-CN' | 'auto';
@@ -18,6 +18,8 @@ interface AppSettingsSchema {
   ollamaConfig: OllamaConfig | null;
   /** UI language preference ('auto' follows system) */
   language: UILanguage;
+  /** LiteLLM proxy configuration */
+  litellmConfig: LiteLLMConfig | null;
 }
 
 const appSettingsStore = new Store<AppSettingsSchema>({
@@ -31,6 +33,7 @@ const appSettingsStore = new Store<AppSettingsSchema>({
     },
     ollamaConfig: null,
     language: 'auto',
+    litellmConfig: null,
   },
 });
 
@@ -91,6 +94,7 @@ export function setOllamaConfig(config: OllamaConfig | null): void {
 }
 
 /**
+/**
  * Get UI language preference
  */
 export function getLanguage(): UILanguage {
@@ -105,6 +109,20 @@ export function setLanguage(language: UILanguage): void {
 }
 
 /**
+ * Get LiteLLM configuration
+ */
+export function getLiteLLMConfig(): LiteLLMConfig | null {
+  return appSettingsStore.get('litellmConfig');
+}
+
+/**
+ * Set LiteLLM configuration
+ */
+export function setLiteLLMConfig(config: LiteLLMConfig | null): void {
+  appSettingsStore.set('litellmConfig', config);
+}
+
+/**
  * Get all app settings
  */
 export function getAppSettings(): AppSettingsSchema {
@@ -114,6 +132,7 @@ export function getAppSettings(): AppSettingsSchema {
     selectedModel: appSettingsStore.get('selectedModel'),
     ollamaConfig: appSettingsStore.get('ollamaConfig') ?? null,
     language: appSettingsStore.get('language'),
+    litellmConfig: appSettingsStore.get('litellmConfig') ?? null,
   };
 }
 

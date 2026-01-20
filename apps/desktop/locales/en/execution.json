@@ -39,12 +39,15 @@
   "permission": {
     "title": "Permission Required",
     "fileTitle": "File Permission Required",
+    "fileDeleteTitle": "File Deletion Warning",
     "questionTitle": "Question",
     "toolQuestion": "Allow {{toolName}}?",
     "tool": "Tool",
     "previewContent": "Preview content",
     "backToOptions": "← Back to options",
     "typeResponse": "Type your response...",
+    "deleteWarningSingle": "This file will be permanently deleted:",
+    "deleteWarningMultiple": "{{count}} files will be permanently deleted:",
     "operations": {
       "delete": "DELETE",
       "overwrite": "OVERWRITE",

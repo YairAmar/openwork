@@ -9,6 +9,7 @@
     "close": "Close",
     "save": "Save",
     "delete": "Delete",
+    "deleteAll": "Delete All",
     "allow": "Allow",
     "deny": "Deny",
     "continue": "Continue",
