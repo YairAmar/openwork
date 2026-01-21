@@ -1,6 +1,7 @@
 // apps/desktop/src/renderer/components/settings/providers/ClassicProviderForm.tsx
 
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { AnimatePresence, motion } from 'framer-motion';
 import { getAccomplish } from '@/lib/accomplish';
 import { settingsVariants, settingsTransitions } from '@/lib/animations';
@@ -48,6 +49,7 @@ export function ClassicProviderForm({
   onModelChange,
   showModelError,
 }: ClassicProviderFormProps) {
+  const { t } = useTranslation('settings');
   const [apiKey, setApiKey] = useState('');
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -58,9 +60,12 @@ export function ClassicProviderForm({
   const isConnected = connectedProvider?.connectionStatus === 'connected';
   const logoSrc = PROVIDER_LOGOS[providerId];
 
+  // Get translated provider name
+  const providerName = t(`providers.${providerId}`, { defaultValue: meta.name });
+
   const handleConnect = async () => {
     if (!apiKey.trim()) {
-      setError('Please enter an API key');
+      setError(t('apiKey.enterKeyRequired'));
       return;
     }
 
@@ -72,7 +77,7 @@ export function ClassicProviderForm({
       const validation = await accomplish.validateApiKeyForProvider(providerId, apiKey.trim());
 
       if (!validation.valid) {
-        setError(validation.error || 'Invalid API key');
+        setError(validation.error || t('apiKey.invalidKey'));
         setConnecting(false);
         return;
       }
@@ -101,7 +106,7 @@ export function ClassicProviderForm({
       onConnect(provider);
       setApiKey('');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Connection failed');
+      setError(err instanceof Error ? err.message : t('status.connectionFailed'));
     } finally {
       setConnecting(false);
     }
@@ -109,12 +114,12 @@ export function ClassicProviderForm({
 
   return (
     <div className="rounded-xl border border-border bg-card p-5" data-testid="provider-settings-panel">
-      <ProviderFormHeader logoSrc={logoSrc} providerName={meta.name} />
+      <ProviderFormHeader logoSrc={logoSrc} providerName={providerName} />
 
       {/* API Key Section */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <label className="text-sm font-medium text-foreground">API Key</label>
+          <label className="text-sm font-medium text-foreground">{t('apiKey.title')}</label>
           {meta.helpUrl && (
             <a
               href={meta.helpUrl}
@@ -122,7 +127,7 @@ export function ClassicProviderForm({
               rel="noopener noreferrer"
               className="text-sm text-muted-foreground hover:text-primary underline"
             >
-              How can I find it?
+              {t('help.findApiKey')}
             </a>
           )}
         </div>
@@ -144,7 +149,7 @@ export function ClassicProviderForm({
                   type="password"
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
-                  placeholder="Enter API Key"
+                  placeholder={t('apiKey.enterKey')}
                   disabled={connecting}
                   data-testid="api-key-input"
                   className="flex-1 rounded-md border border-input bg-background px-3 py-2.5 text-sm disabled:opacity-50"
@@ -180,7 +185,7 @@ export function ClassicProviderForm({
                 value={(() => {
                   const creds = connectedProvider?.credentials as ApiKeyCredentials | undefined;
                   if (creds?.keyPrefix) return creds.keyPrefix;
-                  return 'API key saved (reconnect to see prefix)';
+                  return t('apiKey.savedReconnectToSee');
                 })()}
                 disabled
                 data-testid="api-key-display"
