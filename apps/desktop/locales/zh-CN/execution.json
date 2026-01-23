@@ -13,6 +13,7 @@
     "followUpDescription": "您的后续操作将自动继续"
   },
   "thinking": "思考中...",
+  "coldStartHint": "首次任务需要更长时间...",
   "agentWorking": "智能体工作中...",
   "stopAgent": "停止智能体 (Ctrl+C)",
   "followUp": {
