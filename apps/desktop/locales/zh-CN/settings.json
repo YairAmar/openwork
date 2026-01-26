@@ -145,7 +145,11 @@
     "title": "开发者",
     "debugMode": "调试模式",
     "debugDescription": "在任务视图中显示详细的后端日志。",
-    "debugEnabled": "调试模式已启用。运行任务时将在任务视图中显示后端日志。"
+    "debugEnabled": "调试模式已启用。运行任务时将在任务视图中显示后端日志。",
+    "exportLogs": "导出日志",
+    "exporting": "导出中...",
+    "exported": "已导出",
+    "exportFailed": "导出失败"
   },
   "language": {
     "title": "语言",

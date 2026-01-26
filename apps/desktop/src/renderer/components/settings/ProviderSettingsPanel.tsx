@@ -7,6 +7,7 @@ import { PROVIDER_META } from '@accomplish/shared';
 import {
   ClassicProviderForm,
   BedrockProviderForm,
+  AzureFoundryProviderForm,
   OllamaProviderForm,
   OpenRouterProviderForm,
   LiteLLMProviderForm,
@@ -51,6 +52,17 @@ export function ProviderSettingsPanel({
       case 'aws':
         return (
           <BedrockProviderForm
+            connectedProvider={connectedProvider}
+            onConnect={onConnect}
+            onDisconnect={onDisconnect}
+            onModelChange={onModelChange}
+            showModelError={showModelError}
+          />
+        );
+
+      case 'azure':
+        return (
+          <AzureFoundryProviderForm
             connectedProvider={connectedProvider}
             onConnect={onConnect}
             onDisconnect={onDisconnect}

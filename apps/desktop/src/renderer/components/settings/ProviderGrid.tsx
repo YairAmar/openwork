@@ -14,12 +14,14 @@ const PROVIDER_ORDER: ProviderId[] = [
   'openai',
   'google',
   'bedrock',
+  'azure-foundry',
   'deepseek',
   'zai',
   'ollama',
   'xai',
   'openrouter',
   'litellm',
+  'minimax',
 ];
 
 interface ProviderGridProps {

@@ -47,6 +47,7 @@
     "previewContent": "Preview content",
     "backToOptions": "← Back to options",
     "typeResponse": "Type your response...",
+    "orTypeOwn": "or type your own",
     "deleteWarningSingle": "This file will be permanently deleted:",
     "deleteWarningMultiple": "{{count}} files will be permanently deleted:",
     "operations": {

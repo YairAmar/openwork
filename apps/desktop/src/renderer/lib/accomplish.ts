@@ -19,6 +19,7 @@ import type {
   ProviderSettings,
   ProviderId,
   ConnectedProvider,
+  TodoItem,
 } from '@accomplish/shared';
 
 // Define the API interface
@@ -47,7 +48,7 @@ interface AccomplishAPI {
 
   // Settings
   getApiKeys(): Promise<ApiKeyConfig[]>;
-  addApiKey(provider: 'anthropic' | 'openai' | 'openrouter' | 'google' | 'xai' | 'deepseek' | 'zai' | 'custom' | 'bedrock' | 'litellm', key: string, label?: string): Promise<ApiKeyConfig>;
+  addApiKey(provider: 'anthropic' | 'openai' | 'openrouter' | 'google' | 'xai' | 'deepseek' | 'zai' | 'azure-foundry' | 'custom' | 'bedrock' | 'litellm', key: string, label?: string): Promise<ApiKeyConfig>;
   removeApiKey(id: string): Promise<void>;
   getDebugMode(): Promise<boolean>;
   setDebugMode(enabled: boolean): Promise<void>;
@@ -58,7 +59,7 @@ interface AccomplishAPI {
   setApiKey(key: string): Promise<void>;
   getApiKey(): Promise<string | null>;
   validateApiKey(key: string): Promise<{ valid: boolean; error?: string }>;
-  validateApiKeyForProvider(provider: string, key: string): Promise<{ valid: boolean; error?: string }>;
+  validateApiKeyForProvider(provider: string, key: string, options?: Record<string, any>): Promise<{ valid: boolean; error?: string }>;
   clearApiKey(): Promise<void>;
 
   // Multi-provider API keys
@@ -74,8 +75,8 @@ interface AccomplishAPI {
   getClaudeVersion(): Promise<string | null>;
 
   // Model selection
-  getSelectedModel(): Promise<{ provider: string; model: string; baseUrl?: string } | null>;
-  setSelectedModel(model: { provider: string; model: string; baseUrl?: string }): Promise<void>;
+  getSelectedModel(): Promise<{ provider: string; model: string; baseUrl?: string; deploymentName?: string } | null>;
+  setSelectedModel(model: { provider: string; model: string; baseUrl?: string; deploymentName?: string }): Promise<void>;
 
   // Ollama configuration
   testOllamaConnection(url: string): Promise<{
@@ -85,6 +86,12 @@ interface AccomplishAPI {
   }>;
   getOllamaConfig(): Promise<{ baseUrl: string; enabled: boolean; lastValidated?: number; models?: Array<{ id: string; displayName: string; size: number }> } | null>;
   setOllamaConfig(config: { baseUrl: string; enabled: boolean; lastValidated?: number; models?: Array<{ id: string; displayName: string; size: number }> } | null): Promise<void>;
+
+  // Azure Foundry configuration
+  getAzureFoundryConfig(): Promise<{ baseUrl: string; deploymentName: string; authType: 'api-key' | 'entra-id'; enabled: boolean; lastValidated?: number } | null>;
+  setAzureFoundryConfig(config: { baseUrl: string; deploymentName: string; authType: 'api-key' | 'entra-id'; enabled: boolean; lastValidated?: number } | null): Promise<void>;
+  testAzureFoundryConnection(config: { endpoint: string; deploymentName: string; authType: 'api-key' | 'entra-id'; apiKey?: string }): Promise<{ success: boolean; error?: string }>;
+  saveAzureFoundryConfig(config: { endpoint: string; deploymentName: string; authType: 'api-key' | 'entra-id'; apiKey?: string }): Promise<void>;
 
   // OpenRouter configuration
   fetchOpenRouterModels(): Promise<{
@@ -135,9 +142,11 @@ interface AccomplishAPI {
   onDebugModeChange?(callback: (data: { enabled: boolean }) => void): () => void;
   onTaskStatusChange?(callback: (data: { taskId: string; status: TaskStatus }) => void): () => void;
   onTaskSummary?(callback: (data: { taskId: string; summary: string }) => void): () => void;
+  onTodoUpdate?(callback: (data: { taskId: string; todos: TodoItem[] }) => void): () => void;
 
   // Logging
   logEvent(payload: { level?: string; message: string; context?: Record<string, unknown> }): Promise<unknown>;
+  exportLogs(): Promise<{ success: boolean; path?: string; error?: string; reason?: string }>;
 }
 
 interface AccomplishShell {

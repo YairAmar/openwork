@@ -1,10 +1,13 @@
-import { ipcMain, BrowserWindow, shell, app } from 'electron';
+import { ipcMain, BrowserWindow, shell, app, dialog } from 'electron';
 import type { IpcMainInvokeEvent } from 'electron';
 import { URL } from 'url';
+import fs from 'fs';
 import {
   isOpenCodeCliInstalled,
   getOpenCodeCliVersion,
 } from '../opencode/adapter';
+import { getLogCollector } from '../logging';
+import { getAzureEntraToken } from '../opencode/azure-token-manager';
 import {
   getTaskManager,
   disposeTaskManager,
@@ -43,6 +46,8 @@ import {
   getLanguage,
   setLanguage,
   type UILanguage,
+  getAzureFoundryConfig,
+  setAzureFoundryConfig,
   getLiteLLMConfig,
   setLiteLLMConfig,
 } from '../store/appSettings';
@@ -77,7 +82,9 @@ import type {
   TaskStatus,
   SelectedModel,
   OllamaConfig,
+  AzureFoundryConfig,
   LiteLLMConfig,
+  TodoItem,
 } from '@accomplish/shared';
 import { DEFAULT_PROVIDERS } from '@accomplish/shared';
 import {
@@ -106,7 +113,7 @@ import {
 } from '../i18n';
 
 const MAX_TEXT_LENGTH = 8000;
-const ALLOWED_API_KEY_PROVIDERS = new Set(['anthropic', 'openai', 'openrouter', 'google', 'xai', 'deepseek', 'zai', 'custom', 'bedrock', 'litellm']);
+const ALLOWED_API_KEY_PROVIDERS = new Set(['anthropic', 'openai', 'openrouter', 'google', 'xai', 'deepseek', 'zai', 'azure-foundry', 'custom', 'bedrock', 'litellm', 'minimax']);
 const API_KEY_VALIDATION_TIMEOUT_MS = 15000;
 
 interface OllamaModel {
@@ -443,6 +450,10 @@ export function registerIPCHandlers(): void {
         // Update task status in history
         updateTaskStatus(taskId, status, new Date().toISOString());
       },
+
+      onTodoUpdate: (todos: TodoItem[]) => {
+        forwardToRenderer('todo:update', { taskId, todos });
+      },
     };
 
     // Start the task via TaskManager (creates isolated adapter or queues if busy)
@@ -695,6 +706,10 @@ export function registerIPCHandlers(): void {
         // Update task status in history
         updateTaskStatus(taskId, status, new Date().toISOString());
       },
+
+      onTodoUpdate: (todos: TodoItem[]) => {
+        forwardToRenderer('todo:update', { taskId, todos });
+      },
     };
 
     // Start the task via TaskManager with sessionId for resume (creates isolated adapter or queues if busy)
@@ -718,7 +733,7 @@ export function registerIPCHandlers(): void {
   handle('settings:api-keys', async (_event: IpcMainInvokeEvent) => {
     const storedCredentials = await listStoredCredentials();
 
-    return storedCredentials
+    const keys = storedCredentials
       .filter((credential) => credential.account.startsWith('apiKey:'))
       .map((credential) => {
         const provider = credential.account.replace('apiKey:', '');
@@ -752,6 +767,24 @@ export function registerIPCHandlers(): void {
           createdAt: new Date().toISOString(),
         };
       });
+
+    // Check for Azure Foundry Entra ID configuration (stored in config, not keychain)
+    // Only add if not already present (checking for API key existence)
+    const azureConfig = getAzureFoundryConfig();
+    const hasAzureKey = keys.some((k) => k.provider === 'azure-foundry');
+
+    if (azureConfig && azureConfig.authType === 'entra-id' && !hasAzureKey) {
+      keys.push({
+        id: 'local-azure-foundry',
+        provider: 'azure-foundry',
+        label: 'Azure Foundry (Entra ID)',
+        keyPrefix: 'Entra ID',
+        isActive: azureConfig.enabled ?? true,
+        createdAt: new Date().toISOString(),
+      });
+    }
+
+    return keys;
   });
 
   // Settings: Add API key (stores securely in OS keychain)
@@ -850,11 +883,26 @@ export function registerIPCHandlers(): void {
   });
 
   // API Key: Validate API key for any provider
-  handle('api-key:validate-provider', async (_event: IpcMainInvokeEvent, provider: string, key: string) => {
+  handle('api-key:validate-provider', async (_event: IpcMainInvokeEvent, provider: string, key: string, options?: Record<string, any>) => {
     if (!ALLOWED_API_KEY_PROVIDERS.has(provider)) {
       return { valid: false, error: t('errors:api.unsupportedProvider') };
     }
-    const sanitizedKey = sanitizeString(key, 'apiKey', 256);
+
+    // Special handling for Azure Foundry with Entra ID - skip strict key validation
+    let sanitizedKey = '';
+    const isUsingEntraIdAuth = provider === 'azure-foundry' && (
+      options?.authType === 'entra-id' || 
+      (!options && getAzureFoundryConfig()?.authType === 'entra-id')
+    );
+
+    if (!isUsingEntraIdAuth) {
+      try {
+        sanitizedKey = sanitizeString(key, 'apiKey', 256);
+      } catch (e) {
+        return { valid: false, error: e instanceof Error ? e.message : 'Invalid API key' };
+      }
+    }
+
     console.log(`[API Key] Validation requested for provider: ${provider}`);
 
     try {
@@ -896,7 +944,7 @@ export function registerIPCHandlers(): void {
 
         case 'openrouter':
           response = await fetchWithTimeout(
-            'https://openrouter.ai/api/v1/models',
+            'https://openrouter.ai/api/v1/auth/key',
             {
               method: 'GET',
               headers: {
@@ -955,6 +1003,119 @@ export function registerIPCHandlers(): void {
             },
             API_KEY_VALIDATION_TIMEOUT_MS
           );
+          break;
+
+        case 'azure-foundry':
+          // Prioritize options passed in (from settings dialog setup)
+          // otherwise fall back to stored config
+          const config = getAzureFoundryConfig();
+          const baseUrl = options?.baseUrl || config?.baseUrl;
+          const deploymentName = options?.deploymentName || config?.deploymentName;
+          const authType = options?.authType || config?.authType || 'api-key';
+
+          // Store token if using Entra ID to avoid double-fetch
+          let entraToken = '';
+
+          if (authType === 'entra-id') {
+             // If we have options, we should try to validate connection using Entra ID (setup mode)
+             if (options?.baseUrl && options?.deploymentName) {
+                 const tokenResult = await getAzureEntraToken();
+                 if (!tokenResult.success) {
+                     return { valid: false, error: tokenResult.error };
+                 }
+                 entraToken = tokenResult.token;
+             } else {
+                 // No options means validating existing config which is entra-id (background check)
+                 // We skip actual validation here to avoid overhead
+                 return { valid: true };
+             }
+          }
+
+          if (!baseUrl || !deploymentName) {
+            console.log('[API Key] Skipping validation for azure-foundry provider (missing config or options)');
+            return { valid: true };
+          }
+
+          /* eslint-disable-next-line no-case-declarations */
+          const cleanBaseUrl = baseUrl.replace(/\/+$/, '');
+          /* eslint-disable-next-line no-case-declarations */
+          const testUrl = `${cleanBaseUrl}/openai/deployments/${deploymentName}/chat/completions?api-version=2023-05-15`;
+
+          /* eslint-disable-next-line no-case-declarations */
+          const headers: Record<string, string> = {
+            'Content-Type': 'application/json',
+          };
+
+          if (authType === 'entra-id') {
+             if (!entraToken) {
+               return { valid: false, error: 'Missing Entra ID access token for Azure Foundry validation request' };
+             }
+             headers['Authorization'] = `Bearer ${entraToken}`;
+          } else {
+             headers['api-key'] = sanitizedKey;
+          }
+
+          // Try max_completion_tokens first (newer models like GPT-4o, GPT-5)
+          response = await fetchWithTimeout(
+            testUrl,
+            {
+              method: 'POST',
+              headers,
+              body: JSON.stringify({
+                messages: [{ role: 'user', content: 'test' }],
+                max_completion_tokens: 5
+              }),
+            },
+            API_KEY_VALIDATION_TIMEOUT_MS
+          );
+
+           // If max_completion_tokens not supported, try max_tokens (older models)
+          if (!response.ok) {
+            const firstErrorData = await response.json().catch(() => ({}));
+            const firstErrorMessage = (firstErrorData as { error?: { message?: string } })?.error?.message || '';
+            console.log('[Azure Foundry] First attempt failed:', firstErrorMessage);
+            
+            if (firstErrorMessage.includes('max_completion_tokens')) {
+              console.log('[Azure Foundry] Retrying with max_tokens for older model');
+              response = await fetchWithTimeout(
+                testUrl,
+                {
+                  method: 'POST',
+                  headers,
+                  body: JSON.stringify({
+                    messages: [{ role: 'user', content: 'test' }],
+                    max_tokens: 5
+                  }),
+                },
+                API_KEY_VALIDATION_TIMEOUT_MS
+              );
+            } else {
+              // Return the error from the first attempt
+              console.warn(`[API Key] Validation failed for ${provider}`, { status: response.status, error: firstErrorMessage });
+              return { valid: false, error: firstErrorMessage || `API returned status ${response.status}` };
+            }
+          }
+          
+        case 'minimax':
+          // MiniMax uses Anthropic-compatible API
+          response = await fetchWithTimeout(
+            'https://api.minimax.io/anthropic/v1/messages',
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${sanitizedKey}`,
+                'anthropic-version': '2023-06-01',
+              },
+              body: JSON.stringify({
+                model: 'MiniMax-M2',
+                max_tokens: 1,
+                messages: [{ role: 'user', content: 'test' }],
+              }),
+            },
+            API_KEY_VALIDATION_TIMEOUT_MS
+          );
+
           break;
 
         default:
@@ -1254,6 +1415,168 @@ export function registerIPCHandlers(): void {
     }
     setOllamaConfig(config);
     console.log('[Ollama] Config saved:', config);
+  });
+
+  // Azure Foundry: Get config
+  handle('azure-foundry:get-config', async (_event: IpcMainInvokeEvent) => {
+    return getAzureFoundryConfig();
+  });
+
+  // Azure Foundry: Set config
+  handle('azure-foundry:set-config', async (_event: IpcMainInvokeEvent, config: AzureFoundryConfig | null) => {
+    if (config !== null) {
+      // Validate required fields
+      if (typeof config.baseUrl !== 'string' || !config.baseUrl.trim()) {
+        throw new Error('Invalid Azure Foundry configuration: baseUrl is required');
+      }
+      if (typeof config.deploymentName !== 'string' || !config.deploymentName.trim()) {
+        throw new Error('Invalid Azure Foundry configuration: deploymentName is required');
+      }
+      if (config.authType !== 'api-key' && config.authType !== 'entra-id') {
+        throw new Error('Invalid Azure Foundry configuration: authType must be api-key or entra-id');
+      }
+      if (typeof config.enabled !== 'boolean') {
+        throw new Error('Invalid Azure Foundry configuration: enabled must be a boolean');
+      }
+      // Validate URL format
+      try {
+        const parsed = new URL(config.baseUrl);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+          throw new Error('Invalid Azure Foundry configuration: Only http and https URLs are allowed');
+        }
+      } catch {
+        throw new Error('Invalid Azure Foundry configuration: Invalid base URL format');
+      }
+    }
+    setAzureFoundryConfig(config);
+    console.log('[Azure Foundry] Config saved:', config);
+  });
+
+  // Azure Foundry: Test connection (for new provider settings architecture)
+  handle('azure-foundry:test-connection', async (
+    _event: IpcMainInvokeEvent,
+    config: { endpoint: string; deploymentName: string; authType: 'api-key' | 'entra-id'; apiKey?: string }
+  ) => {
+    const { endpoint, deploymentName, authType, apiKey } = config;
+
+    // Validate URL format
+    let baseUrl: string;
+    try {
+      const parsed = new URL(endpoint);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return { success: false, error: 'Only http and https URLs are allowed' };
+      }
+      baseUrl = endpoint.replace(/\/$/, '');
+    } catch {
+      return { success: false, error: 'Invalid endpoint URL format' };
+    }
+
+    try {
+      let authHeader: string;
+
+      if (authType === 'api-key') {
+        if (!apiKey) {
+          return { success: false, error: 'API key is required for API key authentication' };
+        }
+        authHeader = apiKey;
+      } else {
+        // Entra ID authentication - uses cached token with auto-refresh
+        const tokenResult = await getAzureEntraToken();
+        if (!tokenResult.success) {
+          return { success: false, error: tokenResult.error };
+        }
+        authHeader = `Bearer ${tokenResult.token}`;
+      }
+
+      // Test connection with a minimal chat completion request
+      const testUrl = `${baseUrl}/openai/deployments/${deploymentName}/chat/completions?api-version=2024-02-15-preview`;
+
+      // Build headers based on auth type
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (authType === 'api-key') {
+        headers['api-key'] = authHeader;
+      } else {
+        headers['Authorization'] = authHeader;
+      }
+
+      const response = await fetchWithTimeout(
+        testUrl,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            messages: [{ role: 'user', content: 'Hi' }],
+            max_completion_tokens: 5,
+          }),
+        },
+        API_KEY_VALIDATION_TIMEOUT_MS
+      );
+
+      if (!response.ok) {
+        // Try with max_tokens for older models
+        const retryResponse = await fetchWithTimeout(
+          testUrl,
+          {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              messages: [{ role: 'user', content: 'Hi' }],
+              max_tokens: 5,
+            }),
+          },
+          API_KEY_VALIDATION_TIMEOUT_MS
+        );
+
+        if (!retryResponse.ok) {
+          const errorData = await retryResponse.json().catch(() => ({}));
+          const errorMessage = (errorData as { error?: { message?: string } })?.error?.message || `API returned status ${retryResponse.status}`;
+          return { success: false, error: errorMessage };
+        }
+      }
+
+      console.log('[Azure Foundry] Connection test successful for deployment:', deploymentName);
+      return { success: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Connection failed';
+      console.warn('[Azure Foundry] Connection test failed:', message);
+
+      if (error instanceof Error && error.name === 'AbortError') {
+        return { success: false, error: 'Request timed out. Check your endpoint URL and network connection.' };
+      }
+      return { success: false, error: message };
+    }
+  });
+
+  // Azure Foundry: Save config (for new provider settings architecture)
+  handle('azure-foundry:save-config', async (
+    _event: IpcMainInvokeEvent,
+    config: { endpoint: string; deploymentName: string; authType: 'api-key' | 'entra-id'; apiKey?: string }
+  ) => {
+    const { endpoint, deploymentName, authType, apiKey } = config;
+
+    // Store API key in secure storage if provided
+    if (authType === 'api-key' && apiKey) {
+      storeApiKey('azure-foundry', apiKey);
+    }
+
+    // Save config to app settings (for legacy support and config generation)
+    const azureConfig: AzureFoundryConfig = {
+      baseUrl: endpoint,
+      deploymentName,
+      authType,
+      enabled: true,
+      lastValidated: Date.now(),
+    };
+    setAzureFoundryConfig(azureConfig);
+
+    console.log('[Azure Foundry] Config saved for new provider settings:', {
+      endpoint,
+      deploymentName,
+      authType,
+      hasApiKey: !!apiKey,
+    });
   });
 
   // OpenRouter: Fetch available models
@@ -1665,6 +1988,55 @@ export function registerIPCHandlers(): void {
 
   handle('provider-settings:get-debug', async () => {
     return getProviderDebugMode();
+  });
+
+  // Logs: Export application logs
+  handle('logs:export', async (event: IpcMainInvokeEvent) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window) throw new Error('No window found');
+
+    // Flush pending logs before export
+    const collector = getLogCollector();
+    collector.flush();
+
+    const logPath = collector.getCurrentLogPath();
+    const logDir = collector.getLogDir();
+
+    // Generate default filename with timestamp
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const defaultFilename = `openwork-logs-${timestamp}.txt`;
+
+    // Show save dialog
+    const result = await dialog.showSaveDialog(window, {
+      title: 'Export Application Logs',
+      defaultPath: defaultFilename,
+      filters: [
+        { name: 'Text Files', extensions: ['txt'] },
+        { name: 'Log Files', extensions: ['log'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    });
+
+    if (result.canceled || !result.filePath) {
+      return { success: false, reason: 'cancelled' };
+    }
+
+    try {
+      // Check if current log file exists
+      if (fs.existsSync(logPath)) {
+        // Copy the log file to the selected location
+        fs.copyFileSync(logPath, result.filePath);
+      } else {
+        // No logs yet - create empty file with header
+        const header = `Openwork Application Logs\nExported: ${new Date().toISOString()}\nLog Directory: ${logDir}\n\nNo logs recorded yet.\n`;
+        fs.writeFileSync(result.filePath, header);
+      }
+
+      return { success: true, path: result.filePath };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      return { success: false, error: message };
+    }
   });
 }
 

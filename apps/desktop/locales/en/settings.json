@@ -145,7 +145,11 @@
     "title": "Developer",
     "debugMode": "Debug Mode",
     "debugDescription": "Show detailed backend logs in the task view.",
-    "debugEnabled": "Debug mode is enabled. Backend logs will appear in the task view when running tasks."
+    "debugEnabled": "Debug mode is enabled. Backend logs will appear in the task view when running tasks.",
+    "exportLogs": "Export Logs",
+    "exporting": "Exporting...",
+    "exported": "Exported",
+    "exportFailed": "Export Failed"
   },
   "language": {
     "title": "Language",

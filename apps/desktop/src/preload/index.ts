@@ -42,7 +42,7 @@ const accomplishAPI = {
   // Settings
   getApiKeys: (): Promise<unknown[]> => ipcRenderer.invoke('settings:api-keys'),
   addApiKey: (
-    provider: 'anthropic' | 'openai' | 'openrouter' | 'google' | 'xai' | 'deepseek' | 'zai' | 'custom' | 'bedrock' | 'litellm',
+    provider: 'anthropic' | 'openai' | 'openrouter' | 'google' | 'xai' | 'deepseek' | 'zai' | 'azure-foundry' | 'custom' | 'bedrock' | 'litellm',
     key: string,
     label?: string
   ): Promise<unknown> =>
@@ -65,8 +65,8 @@ const accomplishAPI = {
     ipcRenderer.invoke('api-key:get'),
   validateApiKey: (key: string): Promise<{ valid: boolean; error?: string }> =>
     ipcRenderer.invoke('api-key:validate', key),
-  validateApiKeyForProvider: (provider: string, key: string): Promise<{ valid: boolean; error?: string }> =>
-    ipcRenderer.invoke('api-key:validate-provider', provider, key),
+  validateApiKeyForProvider: (provider: string, key: string, options?: Record<string, any>): Promise<{ valid: boolean; error?: string }> =>
+    ipcRenderer.invoke('api-key:validate-provider', provider, key, options),
   clearApiKey: (): Promise<void> =>
     ipcRenderer.invoke('api-key:clear'),
 
@@ -86,9 +86,9 @@ const accomplishAPI = {
     ipcRenderer.invoke('opencode:version'),
 
   // Model selection
-  getSelectedModel: (): Promise<{ provider: string; model: string; baseUrl?: string } | null> =>
+  getSelectedModel: (): Promise<{ provider: string; model: string; baseUrl?: string; deploymentName?: string } | null> =>
     ipcRenderer.invoke('model:get'),
-  setSelectedModel: (model: { provider: string; model: string; baseUrl?: string }): Promise<void> =>
+  setSelectedModel: (model: { provider: string; model: string; baseUrl?: string; deploymentName?: string }): Promise<void> =>
     ipcRenderer.invoke('model:set', model),
 
   // Multi-provider API keys
@@ -109,6 +109,21 @@ const accomplishAPI = {
 
   setOllamaConfig: (config: { baseUrl: string; enabled: boolean; lastValidated?: number; models?: Array<{ id: string; displayName: string; size: number }> } | null): Promise<void> =>
     ipcRenderer.invoke('ollama:set-config', config),
+
+  // Azure Foundry configuration
+  getAzureFoundryConfig: (): Promise<{ baseUrl: string; deploymentName: string; authType: 'api-key' | 'entra-id'; enabled: boolean; lastValidated?: number } | null> =>
+    ipcRenderer.invoke('azure-foundry:get-config'),
+
+  setAzureFoundryConfig: (config: { baseUrl: string; deploymentName: string; authType: 'api-key' | 'entra-id'; enabled: boolean; lastValidated?: number } | null): Promise<void> =>
+    ipcRenderer.invoke('azure-foundry:set-config', config),
+
+  testAzureFoundryConnection: (config: { endpoint: string; deploymentName: string; authType: 'api-key' | 'entra-id'; apiKey?: string }): Promise<{
+    success: boolean;
+    error?: string;
+  }> => ipcRenderer.invoke('azure-foundry:test-connection', config),
+
+  saveAzureFoundryConfig: (config: { endpoint: string; deploymentName: string; authType: 'api-key' | 'entra-id'; apiKey?: string }): Promise<void> =>
+    ipcRenderer.invoke('azure-foundry:save-config', config),
 
   // OpenRouter configuration
   fetchOpenRouterModels: (): Promise<{
@@ -213,9 +228,19 @@ const accomplishAPI = {
     ipcRenderer.on('task:summary', listener);
     return () => ipcRenderer.removeListener('task:summary', listener);
   },
+  // Todo updates from OpenCode todowrite tool
+  onTodoUpdate: (callback: (data: { taskId: string; todos: Array<{ id: string; content: string; status: string; priority: string }> }) => void) => {
+    const listener = (_: unknown, data: { taskId: string; todos: Array<{ id: string; content: string; status: string; priority: string }> }) => callback(data);
+    ipcRenderer.on('todo:update', listener);
+    return () => ipcRenderer.removeListener('todo:update', listener);
+  },
 
   logEvent: (payload: { level?: string; message: string; context?: Record<string, unknown> }) =>
     ipcRenderer.invoke('log:event', payload),
+
+  // Export application logs
+  exportLogs: (): Promise<{ success: boolean; path?: string; error?: string; reason?: string }> =>
+    ipcRenderer.invoke('logs:export'),
 
   // i18n - Internationalization
   i18n: {

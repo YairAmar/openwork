@@ -47,6 +47,7 @@
     "previewContent": "预览内容",
     "backToOptions": "← 返回选项",
     "typeResponse": "输入您的回复...",
+    "orTypeOwn": "或输入自定义内容",
     "deleteWarningSingle": "此文件将被永久删除：",
     "deleteWarningMultiple": "{{count}} 个文件将被永久删除：",
     "operations": {
