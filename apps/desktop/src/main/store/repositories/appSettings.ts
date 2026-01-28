@@ -1,10 +1,10 @@
 // apps/desktop/src/main/store/repositories/appSettings.ts
 
-import type { SelectedModel, OllamaConfig, LiteLLMConfig, AzureFoundryConfig } from '@accomplish/shared';
+import type { SelectedModel, OllamaConfig, LiteLLMConfig, AzureFoundryConfig, LMStudioConfig } from '@accomplish/shared';
 import { getDatabase } from '../db';
 
 /** Supported UI languages */
-export type UILanguage = 'en' | 'zh-CN' | 'auto';
+export type UILanguage = 'en' | 'zh-CN' | 'he' | 'auto';
 
 interface AppSettingsRow {
   id: number;
@@ -15,6 +15,8 @@ interface AppSettingsRow {
   litellm_config: string | null;
   azure_foundry_config: string | null;
   language: string;
+  lmstudio_config: string | null;
+  openai_base_url: string | null;
 }
 
 interface AppSettings {
@@ -25,6 +27,8 @@ interface AppSettings {
   litellmConfig: LiteLLMConfig | null;
   azureFoundryConfig: AzureFoundryConfig | null;
   language: UILanguage;
+  lmstudioConfig: LMStudioConfig | null;
+  openaiBaseUrl: string;
 }
 
 function getRow(): AppSettingsRow {
@@ -124,7 +128,7 @@ export function getLanguage(): UILanguage {
   const row = getRow();
   const lang = row.language;
   // Validate that it's a valid UILanguage
-  if (lang === 'en' || lang === 'zh-CN' || lang === 'auto') {
+  if (lang === 'en' || lang === 'zh-CN' || lang === 'he' || lang === 'auto') {
     return lang;
   }
   return 'auto';
@@ -133,6 +137,39 @@ export function getLanguage(): UILanguage {
 export function setLanguage(language: UILanguage): void {
   const db = getDatabase();
   db.prepare('UPDATE app_settings SET language = ? WHERE id = 1').run(language);
+}
+
+export function getLMStudioConfig(): LMStudioConfig | null {
+  const row = getRow();
+  if (!row.lmstudio_config) return null;
+  try {
+    return JSON.parse(row.lmstudio_config) as LMStudioConfig;
+  } catch {
+    return null;
+  }
+}
+
+export function setLMStudioConfig(config: LMStudioConfig | null): void {
+  const db = getDatabase();
+  db.prepare('UPDATE app_settings SET lmstudio_config = ? WHERE id = 1').run(
+    config ? JSON.stringify(config) : null
+  );
+}
+
+/**
+ * Get OpenAI base URL override (empty string means default).
+ */
+export function getOpenAiBaseUrl(): string {
+  const row = getRow();
+  return row.openai_base_url || '';
+}
+
+/**
+ * Set OpenAI base URL override (empty string clears override).
+ */
+export function setOpenAiBaseUrl(baseUrl: string): void {
+  const db = getDatabase();
+  db.prepare('UPDATE app_settings SET openai_base_url = ? WHERE id = 1').run(baseUrl || '');
 }
 
 function safeParseJson<T>(json: string | null): T | null {
@@ -147,7 +184,7 @@ function safeParseJson<T>(json: string | null): T | null {
 export function getAppSettings(): AppSettings {
   const row = getRow();
   const lang = row.language;
-  const validLang: UILanguage = (lang === 'en' || lang === 'zh-CN' || lang === 'auto') ? lang : 'auto';
+  const validLang: UILanguage = (lang === 'en' || lang === 'zh-CN' || lang === 'he' || lang === 'auto') ? lang : 'auto';
   return {
     debugMode: row.debug_mode === 1,
     onboardingComplete: row.onboarding_complete === 1,
@@ -156,6 +193,8 @@ export function getAppSettings(): AppSettings {
     litellmConfig: safeParseJson<LiteLLMConfig>(row.litellm_config),
     azureFoundryConfig: safeParseJson<AzureFoundryConfig>(row.azure_foundry_config),
     language: validLang,
+    lmstudioConfig: safeParseJson<LMStudioConfig>(row.lmstudio_config),
+    openaiBaseUrl: row.openai_base_url || '',
   };
 }
 
@@ -169,7 +208,9 @@ export function clearAppSettings(): void {
       ollama_config = NULL,
       litellm_config = NULL,
       azure_foundry_config = NULL,
-      language = 'auto'
+      language = 'auto',
+      lmstudio_config = NULL,
+      openai_base_url = ''
     WHERE id = 1`
   ).run();
 }
