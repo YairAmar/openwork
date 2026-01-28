@@ -25,6 +25,39 @@ pnpm lint         # Run linting
 - Use meaningful variable and function names
 - Keep functions focused and small
 
+## Contributing Translations
+
+Openwork supports multiple languages (English, Simplified Chinese, Hebrew). When adding or modifying UI text:
+
+1. **Add English text** to translation files in `apps/desktop/locales/en/*.json`
+   ```json
+   {
+     "buttons": {
+       "newFeature": "New Feature"
+     }
+   }
+   ```
+
+2. **Use translations in components**:
+   ```tsx
+   const { t } = useTranslation('common');
+   <button>{t('buttons.newFeature')}</button>
+   ```
+
+3. **Run translation sync** to auto-translate to other languages:
+   ```bash
+   pnpm i18n:sync
+   ```
+
+4. **Validate translations** (automatically runs in CI):
+   ```bash
+   pnpm i18n:validate
+   ```
+
+5. **Commit all translation files** together with your changes
+
+For detailed instructions, see [Translation Guide](scripts/README-i18n.md).
+
 ## Pull Request Process
 
 1. Ensure your code builds without errors (`pnpm build`)
