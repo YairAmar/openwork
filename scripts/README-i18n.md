@@ -320,6 +320,26 @@ A GitHub Actions workflow is included at `.github/workflows/validate-translation
 
 4. **Fails the build** if translations are incomplete
 
+### Manual Translation Sync via GitHub Actions
+
+A **manually-triggered** workflow is available at `.github/workflows/sync-translations.yml` for maintainers:
+
+**To use:**
+1. Add `ANTHROPIC_API_KEY` to GitHub Secrets (Settings → Secrets and variables → Actions)
+2. Go to **Actions** tab → **Sync Translations** → **Run workflow**
+3. Choose languages to sync (default: all)
+
+**When to use:**
+- Before releasing a new version
+- After merging UI text changes
+- When translations fall behind
+
+**Benefits:**
+- ✅ Controlled by maintainer (no surprise costs)
+- ✅ Can sync specific languages or all at once
+- ✅ Commits translations back to main branch
+- ✅ Optional auto-run on releases (commented out by default)
+
 ### Adding to Your CI Pipeline
 
 You can add translation validation to any CI system:
