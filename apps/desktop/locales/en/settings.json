@@ -90,7 +90,17 @@
     "learnMore": "Learn more"
   },
   "common": {
-    "optional": "Optional"
+    "optional": "Optional",
+    "model": "Model",
+    "selectModel": "Select a model...",
+    "pleaseSelectModel": "Please select a model",
+    "toolUnsupported": "This model does not support tool/function calling",
+    "toolUnsupportedDetail": "Tasks requiring browser automation or file operations will not work correctly.",
+    "toolUnknown": "Tool support could not be verified",
+    "toolUnknownDetail": "This model may or may not support tool/function calling. Test it to confirm.",
+    "functionCallingVerified": "Function calling verified",
+    "contextLengthWarning": "Context length requirement",
+    "contextLengthWarningDetail": "Ensure your model is loaded with a large enough context length (max available recommended) in LM Studio settings."
   },
   "ollama": {
     "description": "Connect to a local Ollama server to use models running on your machine.",
@@ -169,5 +179,28 @@
     "noProviderReady": "No provider ready",
     "noProviderReadyDescription": "You need to connect a provider and select a model before you can run tasks.",
     "closeAnyway": "Close Anyway"
+  },
+  "speech": {
+    "title": "Speech-to-Text",
+    "description": "Enable voice input using ElevenLabs Speech-to-Text API",
+    "apiKeyRequired": "API key is required",
+    "apiKeySaved": "API key saved successfully",
+    "apiKeySaveFailed": "Failed to save API key",
+    "setupInstructions": "To use speech input, you need an ElevenLabs API key. Get one at",
+    "elevenlabsLink": "elevenlabs.io",
+    "apiKeyConfigured": "ElevenLabs API key is configured. Enter a new key below to replace it.",
+    "apiKeyLabel": "ElevenLabs API Key",
+    "apiKeyPlaceholder": "xi-...",
+    "apiKeyMasked": "••••••••••••••••",
+    "secureStorage": "Your API key is stored securely in your system keychain.",
+    "howToUse": "How to use:",
+    "clickMicButton": "Click the microphone button",
+    "holdAltKey": "Hold Alt key",
+    "tooltipSetup": "Click to set up voice input",
+    "tooltipRecording": "Recording ({{duration}}) - Click to stop",
+    "tooltipTranscribing": "Transcribing...",
+    "tooltipError": "Error during transcription - Click to retry",
+    "tooltipDefault": "Click to record or hold Alt to record voice input",
+    "processing": "Processing..."
   }
 }

@@ -90,7 +90,17 @@
     "learnMore": "了解更多"
   },
   "common": {
-    "optional": "可选"
+    "optional": "可选",
+    "model": "模型",
+    "selectModel": "选择模型...",
+    "pleaseSelectModel": "请选择模型",
+    "toolUnsupported": "此模型不支持工具/函数调用",
+    "toolUnsupportedDetail": "需要浏览器自动化或文件操作的任务将无法正常工作。",
+    "toolUnknown": "无法验证工具支持",
+    "toolUnknownDetail": "此模型可能支持也可能不支持工具/函数调用。请测试以确认。",
+    "functionCallingVerified": "函数调用已验证",
+    "contextLengthWarning": "上下文长度要求",
+    "contextLengthWarningDetail": "请确保在 LM Studio 设置中加载模型时使用足够大的上下文长度（建议使用最大可用长度）。"
   },
   "ollama": {
     "description": "连接到本地 Ollama 服务器，使用在本机运行的模型。",
@@ -169,5 +179,28 @@
     "noProviderReady": "尚未配置服务商",
     "noProviderReadyDescription": "您需要连接一个服务商并选择模型后才能运行任务。",
     "closeAnyway": "仍然关闭"
+  },
+  "speech": {
+    "title": "语音转文字",
+    "description": "使用 ElevenLabs 语音转文字 API 启用语音输入",
+    "apiKeyRequired": "需要 API 密钥",
+    "apiKeySaved": "API 密钥保存成功",
+    "apiKeySaveFailed": "API 密钥保存失败",
+    "setupInstructions": "要使用语音输入功能，您需要一个 ElevenLabs API 密钥。请前往获取",
+    "elevenlabsLink": "elevenlabs.io",
+    "apiKeyConfigured": "ElevenLabs API 密钥已配置。在下方输入新密钥以替换现有密钥。",
+    "apiKeyLabel": "ElevenLabs API 密钥",
+    "apiKeyPlaceholder": "xi-...",
+    "apiKeyMasked": "••••••••••••••••",
+    "secureStorage": "您的 API 密钥已安全存储在系统钥匙串中。",
+    "howToUse": "使用方法：",
+    "clickMicButton": "点击麦克风按钮",
+    "holdAltKey": "按住 Alt 键",
+    "tooltipSetup": "点击设置语音输入",
+    "tooltipRecording": "正在录音 ({{duration}}) - 点击停止",
+    "tooltipTranscribing": "正在转录...",
+    "tooltipError": "转录过程中出错 - 点击重试",
+    "tooltipDefault": "点击录音或按住 Alt 键进行语音输入",
+    "processing": "处理中..."
   }
 }

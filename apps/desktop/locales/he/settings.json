@@ -90,7 +90,17 @@
     "learnMore": "למד עוד"
   },
   "common": {
-    "optional": "אופציונלי"
+    "optional": "אופציונלי",
+    "model": "מודל",
+    "selectModel": "בחר מודל...",
+    "pleaseSelectModel": "אנא בחר מודל",
+    "toolUnsupported": "מודל זה אינו תומך בקריאת כלים/פונקציות",
+    "toolUnsupportedDetail": "משימות הדורשות אוטומציה של דפדפן או פעולות על קבצים לא יפעלו כראוי.",
+    "toolUnknown": "לא ניתן לאמת תמיכה בכלים",
+    "toolUnknownDetail": "מודל זה עשוי לתמוך או לא לתמוך בקריאת כלים/פונקציות. בדוק אותו כדי לוודא.",
+    "functionCallingVerified": "קריאת פונקציות אומתה",
+    "contextLengthWarning": "דרישת אורך הקשר",
+    "contextLengthWarningDetail": "ודא שהמודל שלך נטען עם אורך הקשר גדול מספיק (מומלץ המקסימום הזמין) בהגדרות LM Studio."
   },
   "ollama": {
     "description": "התחבר לשרת Ollama מקומי כדי להשתמש במודלים הרצים על המחשב שלך.",
@@ -169,5 +179,28 @@
     "noProviderReady": "אין ספק מוכן",
     "noProviderReadyDescription": "אתה צריך להתחבר לספק ולבחור מודל לפני שתוכל להריץ משימות.",
     "closeAnyway": "סגור בכל זאת"
+  },
+  "speech": {
+    "title": "דיבור לטקסט",
+    "description": "הפעל קלט קולי באמצעות ElevenLabs Speech-to-Text API",
+    "apiKeyRequired": "נדרש מפתח API",
+    "apiKeySaved": "מפתח API נשמר בהצלחה",
+    "apiKeySaveFailed": "שמירת מפתח API נכשלה",
+    "setupInstructions": "כדי להשתמש בקלט קולי, אתה צריך מפתח ElevenLabs API. קבל אחד ב",
+    "elevenlabsLink": "elevenlabs.io",
+    "apiKeyConfigured": "מפתח ElevenLabs API מוגדר. הכנס מפתח חדש למטה כדי להחליף אותו.",
+    "apiKeyLabel": "מפתח ElevenLabs API",
+    "apiKeyPlaceholder": "xi-...",
+    "apiKeyMasked": "••••••••••••••••",
+    "secureStorage": "מפתח ה-API שלך מאוחסן בבטחה במחזיק המפתחות של המערכת.",
+    "howToUse": "איך להשתמש:",
+    "clickMicButton": "לחץ על כפתור המיקרופון",
+    "holdAltKey": "החזק מקש Alt",
+    "tooltipSetup": "לחץ כדי להגדיר קלט קולי",
+    "tooltipRecording": "מקליט ({{duration}}) - לחץ כדי לעצור",
+    "tooltipTranscribing": "מתמלל...",
+    "tooltipError": "שגיאה במהלך התמלול - לחץ כדי לנסות שוב",
+    "tooltipDefault": "לחץ כדי להקליט או החזק Alt כדי להקליט קלט קולי",
+    "processing": "מעבד..."
   }
 }
