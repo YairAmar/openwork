@@ -28,7 +28,12 @@
     "no": "No",
     "retry": "Retry",
     "saveApiKey": "Save API Key",
-    "copyToClipboard": "Copy to clipboard"
+    "copyToClipboard": "Copy to clipboard",
+    "dismiss": "Dismiss"
+  },
+  "aria": {
+    "scrollToBottom": "Scroll to bottom",
+    "customResponse": "Custom response"
   },
   "status": {
     "running": "Running",

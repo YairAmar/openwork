@@ -24,6 +24,7 @@ const PROVIDER_NAMES: Record<string, string> = {
 
 export function AuthErrorToast({ error, onReLogin, onDismiss }: AuthErrorToastProps) {
   const { t } = useTranslation('errors');
+  const { t: tCommon } = useTranslation('common');
 
   if (!error) return null;
 
@@ -54,7 +55,7 @@ export function AuthErrorToast({ error, onReLogin, onDismiss }: AuthErrorToastPr
                     onClick={onDismiss}
                     className="flex-shrink-0 rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
                     data-testid="auth-error-toast-dismiss"
-                    aria-label="Dismiss"
+                    aria-label={tCommon('buttons.dismiss')}
                   >
                     <X className="h-4 w-4" />
                   </button>

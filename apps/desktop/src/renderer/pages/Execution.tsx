@@ -863,7 +863,7 @@ export default function ExecutionPage() {
                   <button
                     onClick={scrollToBottom}
                     className="h-8 w-8 rounded-full bg-muted hover:bg-muted/80 border border-border shadow-md flex items-center justify-center transition-colors pointer-events-auto"
-                    aria-label="Scroll to bottom"
+                    aria-label={tCommon('aria.scrollToBottom')}
                     data-testid="scroll-to-bottom-button"
                   >
                     <ChevronDown className="h-4 w-4 text-muted-foreground" />
@@ -1085,7 +1085,7 @@ export default function ExecutionPage() {
                               e.target.style.height = `${e.target.scrollHeight}px`;
                             }}
                             placeholder={t('permission.enterDifferentOption')}
-                            aria-label="Custom response"
+                            aria-label={tCommon('aria.customResponse')}
                             rows={1}
                             className="w-full resize-none overflow-hidden rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
                             style={{ minHeight: '38px', maxHeight: '150px' }}

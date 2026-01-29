@@ -121,7 +121,7 @@ export default function TaskInputBar({
                 className="ml-2 underline hover:no-underline"
                 type="button"
               >
-                Retry
+                {t('buttons.retry')}
               </button>
             )}
           </AlertDescription>

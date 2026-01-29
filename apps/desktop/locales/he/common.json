@@ -28,7 +28,12 @@
     "no": "לא",
     "retry": "נסה שוב",
     "saveApiKey": "שמור מפתח API",
-    "copyToClipboard": "העתק ללוח"
+    "copyToClipboard": "העתק ללוח",
+    "dismiss": "סגור"
+  },
+  "aria": {
+    "scrollToBottom": "גלול למטה",
+    "customResponse": "תגובה מותאמת"
   },
   "status": {
     "running": "רץ",

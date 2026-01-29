@@ -28,7 +28,12 @@
     "no": "否",
     "retry": "重试",
     "saveApiKey": "保存 API 密钥",
-    "copyToClipboard": "复制到剪贴板"
+    "copyToClipboard": "复制到剪贴板",
+    "dismiss": "关闭"
+  },
+  "aria": {
+    "scrollToBottom": "滚动到底部",
+    "customResponse": "自定义回复"
   },
   "status": {
     "running": "运行中",
