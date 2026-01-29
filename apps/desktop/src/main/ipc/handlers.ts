@@ -79,10 +79,24 @@ import {
   isQuestionRequest,
 } from '../permission-api';
 import {
+  startTranslationApiServer,
+  initTranslationApi,
+} from '../translation-api';
+import {
   validateElevenLabsApiKey,
   transcribeAudio,
   isElevenLabsConfigured,
 } from '../services/speechToText';
+import {
+  detectLanguage,
+  isEnglish,
+  translateToEnglish,
+  translateFromEnglish,
+  getTaskLanguage,
+  setTaskLanguage,
+  clearTaskLanguage,
+  getLanguageName,
+} from '../services/translationService';
 import type {
   TaskConfig,
   PermissionResponse,
@@ -233,6 +247,61 @@ function flushAndCleanupBatcher(taskId: string): void {
   }
 }
 
+/**
+ * Translate assistant message content to target language if needed
+ */
+async function translateAssistantMessage(
+  taskMessage: TaskMessage,
+  taskId: string
+): Promise<TaskMessage> {
+  // Only translate assistant text messages
+  if (taskMessage.type !== 'assistant' || !taskMessage.content) {
+    return taskMessage;
+  }
+
+  const targetLang = getTaskLanguage(taskId);
+  if (!targetLang || isEnglish(targetLang)) {
+    return taskMessage;
+  }
+
+  try {
+    const translatedContent = await translateFromEnglish(taskMessage.content, targetLang);
+    return {
+      ...taskMessage,
+      content: translatedContent,
+    };
+  } catch (err) {
+    console.warn('[IPC] Failed to translate output, using original:', err);
+    return taskMessage;
+  }
+}
+
+/**
+ * Translate todo items content to target language if needed
+ */
+async function translateTodoItems(
+  todos: TodoItem[],
+  taskId: string
+): Promise<TodoItem[]> {
+  const targetLang = getTaskLanguage(taskId);
+  if (!targetLang || isEnglish(targetLang)) {
+    return todos;
+  }
+
+  try {
+    const translatedTodos = await Promise.all(
+      todos.map(async (todo) => ({
+        ...todo,
+        content: await translateFromEnglish(todo.content, targetLang),
+      }))
+    );
+    return translatedTodos;
+  } catch (err) {
+    console.warn('[IPC] Failed to translate todos, using original:', err);
+    return todos;
+  }
+}
+
 function assertTrustedWindow(window: BrowserWindow | null): BrowserWindow {
   if (!window || window.isDestroyed()) {
     throw new Error(t('errors:validation.untrustedWindow'));
@@ -341,15 +410,35 @@ export function registerIPCHandlers(): void {
       throw new Error('No provider is ready. Please connect a provider and select a model in Settings.');
     }
 
-    // Initialize permission API server (once, when we have a window)
+    // Initialize permission and translation API servers (once, when we have a window)
     if (!permissionApiInitialized) {
       initPermissionApi(window, () => taskManager.getActiveTaskId());
+      initTranslationApi(() => taskManager.getActiveTaskId());
       startPermissionApiServer();
       startQuestionApiServer();
+      startTranslationApiServer();
       permissionApiInitialized = true;
     }
 
     const taskId = createTaskId();
+
+    // Save original prompt for history before any translation
+    const originalPrompt = validatedConfig.prompt;
+
+    // Detect input language and translate to English if needed
+    const detectedLang = detectLanguage(validatedConfig.prompt);
+    if (!isEnglish(detectedLang)) {
+      setTaskLanguage(taskId, detectedLang);
+      try {
+        const translatedPrompt = await translateToEnglish(validatedConfig.prompt, detectedLang);
+        // Prepend language indicator so agent knows to use translate_to_user_language tool
+        const langName = getLanguageName(detectedLang);
+        validatedConfig.prompt = `[User's language: ${langName}] ${translatedPrompt}`;
+        console.log(`[IPC] Translated input from ${detectedLang} to English for task ${taskId}`);
+      } catch (err) {
+        console.warn('[IPC] Failed to translate input, using original:', err);
+      }
+    }
 
     // E2E Mock Mode: Return mock task and emit simulated events
     if (isMockTaskEventsEnabled()) {
@@ -383,8 +472,10 @@ export function registerIPCHandlers(): void {
         const taskMessage = toTaskMessage(message);
         if (!taskMessage) return;
 
-        // Queue message for batching instead of immediate send
-        queueMessage(taskId, taskMessage, forwardToRenderer, addTaskMessage);
+        // Translate assistant messages to user's language if needed, then queue
+        void translateAssistantMessage(taskMessage, taskId).then((translatedMessage) => {
+          queueMessage(taskId, translatedMessage, forwardToRenderer, addTaskMessage);
+        });
       },
 
       onProgress: (progress: { stage: string; message?: string }) => {
@@ -403,6 +494,8 @@ export function registerIPCHandlers(): void {
       onComplete: (result: TaskResult) => {
         // Flush any pending messages before completing
         flushAndCleanupBatcher(taskId);
+
+        // Note: Don't clear language tracking here - user might continue the task
 
         forwardToRenderer('task:update', {
           taskId,
@@ -433,6 +526,8 @@ export function registerIPCHandlers(): void {
       onError: (error: Error) => {
         // Flush any pending messages before error
         flushAndCleanupBatcher(taskId);
+
+        // Note: Don't clear language tracking here - user might continue the task
 
         forwardToRenderer('task:update', {
           taskId,
@@ -465,7 +560,10 @@ export function registerIPCHandlers(): void {
       },
 
       onTodoUpdate: (todos: TodoItem[]) => {
-        forwardToRenderer('todo:update', { taskId, todos });
+        // Translate todo items to user's language if needed
+        void translateTodoItems(todos, taskId).then((translatedTodos) => {
+          forwardToRenderer('todo:update', { taskId, todos: translatedTodos });
+        });
       },
 
       onAuthError: (error: { providerId: string; message: string }) => {
@@ -477,11 +575,14 @@ export function registerIPCHandlers(): void {
     // Start the task via TaskManager (creates isolated adapter or queues if busy)
     const task = await taskManager.startTask(taskId, validatedConfig, callbacks);
 
-    // Add initial user message with the prompt to the chat
+    // Override task prompt with original (not translated) for display in UI
+    task.prompt = originalPrompt;
+
+    // Add initial user message with the original prompt (not translated) to the chat
     const initialUserMessage: TaskMessage = {
       id: createMessageId(),
       type: 'user',
-      content: validatedConfig.prompt,
+      content: originalPrompt,
       timestamp: new Date().toISOString(),
     };
     task.messages = [initialUserMessage];
@@ -491,9 +592,19 @@ export function registerIPCHandlers(): void {
 
     // Generate AI summary asynchronously (don't block task execution)
     generateTaskSummary(validatedConfig.prompt)
-      .then((summary) => {
-        updateTaskSummary(taskId, summary);
-        forwardToRenderer('task:summary', { taskId, summary });
+      .then(async (summary) => {
+        // Translate summary to user's language if needed
+        const targetLang = getTaskLanguage(taskId);
+        let displaySummary = summary;
+        if (targetLang && !isEnglish(targetLang)) {
+          try {
+            displaySummary = await translateFromEnglish(summary, targetLang);
+          } catch (err) {
+            console.warn('[IPC] Failed to translate summary:', err);
+          }
+        }
+        updateTaskSummary(taskId, displaySummary);
+        forwardToRenderer('task:summary', { taskId, summary: displaySummary });
       })
       .catch((err) => {
         console.warn('[IPC] Failed to generate task summary:', err);
@@ -544,6 +655,8 @@ export function registerIPCHandlers(): void {
   // Task: Delete task from history
   handle('task:delete', async (_event: IpcMainInvokeEvent, taskId: string) => {
     deleteTask(taskId);
+    // Clean up translation language tracking
+    clearTaskLanguage(taskId);
   });
 
   // Task: Clear all history
@@ -620,12 +733,41 @@ export function registerIPCHandlers(): void {
     // Use existing task ID or create a new one
     const taskId = validatedExistingTaskId || createTaskId();
 
-    // Persist the user's follow-up message to task history
+    // Detect input language and translate to English if needed
+    // For resume, check if we already have a tracked language for the task
+    const taskLang = getTaskLanguage(taskId);
+    const inputLang = detectLanguage(validatedPrompt);
+
+    // If no tracked language yet, set it from input
+    if (!taskLang && !isEnglish(inputLang)) {
+      setTaskLanguage(taskId, inputLang);
+    }
+
+    // Determine what to show in history vs send to agent
+    // History keeps original (already in user's language from UI)
+    // Agent gets English translation if needed
+    const historyPrompt = validatedPrompt;
+    let translatedPrompt = validatedPrompt;
+
+    // If input is not in English, translate to English for the agent
+    if (!isEnglish(inputLang)) {
+      try {
+        const translated = await translateToEnglish(validatedPrompt, inputLang);
+        // Prepend language indicator so agent knows to use translate_to_user_language tool
+        const langName = getLanguageName(inputLang);
+        translatedPrompt = `[User's language: ${langName}] ${translated}`;
+        console.log(`[IPC] Translated resume input from ${inputLang} to English for task ${taskId}`);
+      } catch (err) {
+        console.warn('[IPC] Failed to translate resume input, using original:', err);
+      }
+    }
+
+    // Persist the user's follow-up message to task history (in user's language)
     if (validatedExistingTaskId) {
       const userMessage: TaskMessage = {
         id: createMessageId(),
         type: 'user',
-        content: validatedPrompt,
+        content: historyPrompt,
         timestamp: new Date().toISOString(),
       };
       addTaskMessage(validatedExistingTaskId, userMessage);
@@ -644,8 +786,10 @@ export function registerIPCHandlers(): void {
         const taskMessage = toTaskMessage(message);
         if (!taskMessage) return;
 
-        // Queue message for batching instead of immediate send
-        queueMessage(taskId, taskMessage, forwardToRenderer, addTaskMessage);
+        // Translate assistant messages to user's language if needed, then queue
+        void translateAssistantMessage(taskMessage, taskId).then((translatedMessage) => {
+          queueMessage(taskId, translatedMessage, forwardToRenderer, addTaskMessage);
+        });
       },
 
       onProgress: (progress: { stage: string; message?: string }) => {
@@ -664,6 +808,8 @@ export function registerIPCHandlers(): void {
       onComplete: (result: TaskResult) => {
         // Flush any pending messages before completing
         flushAndCleanupBatcher(taskId);
+
+        // Note: Don't clear language tracking here - user might continue the task
 
         forwardToRenderer('task:update', {
           taskId,
@@ -694,6 +840,8 @@ export function registerIPCHandlers(): void {
       onError: (error: Error) => {
         // Flush any pending messages before error
         flushAndCleanupBatcher(taskId);
+
+        // Note: Don't clear language tracking here - user might continue the task
 
         forwardToRenderer('task:update', {
           taskId,
@@ -726,13 +874,17 @@ export function registerIPCHandlers(): void {
       },
 
       onTodoUpdate: (todos: TodoItem[]) => {
-        forwardToRenderer('todo:update', { taskId, todos });
+        // Translate todo items to user's language if needed
+        void translateTodoItems(todos, taskId).then((translatedTodos) => {
+          forwardToRenderer('todo:update', { taskId, todos: translatedTodos });
+        });
       },
     };
 
     // Start the task via TaskManager with sessionId for resume (creates isolated adapter or queues if busy)
+    // Use translated prompt for the agent, but store original in history
     const task = await taskManager.startTask(taskId, {
-      prompt: validatedPrompt,
+      prompt: translatedPrompt,
       sessionId: validatedSessionId,
       taskId,
     }, callbacks);
