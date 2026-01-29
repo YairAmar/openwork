@@ -1,4 +1,5 @@
 import { motion } from 'framer-motion';
+import { useTranslation } from 'react-i18next';
 import { CheckCircle2, Circle, Loader2, XCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { TodoItem } from '@accomplish/shared';
@@ -8,6 +9,8 @@ interface TodoSidebarProps {
 }
 
 export function TodoSidebar({ todos }: TodoSidebarProps) {
+  const { t } = useTranslation('execution');
+
   if (todos.length === 0) return null;
 
   const completed = todos.filter(t => t.status === 'completed').length;
@@ -25,9 +28,9 @@ export function TodoSidebar({ todos }: TodoSidebarProps) {
       {/* Header */}
       <div className="px-4 py-3 border-b border-border">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-sm font-medium text-foreground">Tasks</span>
+          <span className="text-sm font-medium text-foreground">{t('todos.title')}</span>
           <span className="text-xs text-muted-foreground">
-            {completed} of {total}
+            {t('todos.progress', { completed, total })}
           </span>
         </div>
         {/* Progress bar */}
