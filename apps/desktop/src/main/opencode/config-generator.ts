@@ -2,6 +2,7 @@ import { app } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { PERMISSION_API_PORT, QUESTION_API_PORT } from '../permission-api';
+import { TRANSLATION_API_PORT } from '../translation-api';
 import { getOllamaConfig, getLMStudioConfig } from '../store/appSettings';
 import { getApiKey } from '../store/secureStorage';
 import { getProviderSettings, getActiveProviderModel, getConnectedProviderIds } from '../store/providerSettings';
@@ -57,6 +58,7 @@ function resolveBundledTsxCommand(skillsPath: string): string[] {
     path.join(skillsPath, 'ask-user-question', 'node_modules', '.bin', tsxBin),
     path.join(skillsPath, 'dev-browser-mcp', 'node_modules', '.bin', tsxBin),
     path.join(skillsPath, 'complete-task', 'node_modules', '.bin', tsxBin),
+    path.join(skillsPath, 'translate-content', 'node_modules', '.bin', tsxBin),
   ];
 
   for (const candidate of candidates) {
@@ -185,6 +187,36 @@ request_file_permission({
 CRITICAL: The user CANNOT see your text output or CLI prompts!
 To ask ANY question or get user input, you MUST use the AskUserQuestion MCP tool.
 See the ask-user-question skill for full documentation and examples.
+</important>
+
+<important name="content-translation">
+##############################################################################
+# CRITICAL: CONTENT TRANSLATION - MANDATORY FOR NON-ENGLISH USERS
+##############################################################################
+
+If the user writes in a NON-ENGLISH language (Hebrew, Chinese, Japanese, etc.),
+you MUST translate user-facing content to their language using \`translate_to_user_language\`.
+
+BEFORE writing ANY user-facing text file (.md, .txt, notes, docs):
+1. FIRST: Draft content in English (for your reasoning)
+2. THEN: Call translate_to_user_language({ text: englishContent })
+3. FINALLY: Use the TRANSLATED text in Write tool
+
+WRONG (never do this for non-English users):
+  Write({ path: "notes.md", content: "# Meeting Notes\\n..." })  ← NO! Not translated!
+
+CORRECT (always do this):
+  translatedContent = translate_to_user_language({ text: "# Meeting Notes\\n..." })
+  → Get translated text back
+  Write({ path: "notes.md", content: translatedContent })  ← OK, in user's language
+
+This applies to:
+- Documentation (README.md, guides, etc.)
+- Notes, summaries, reports
+- Any .txt or .md file the user will read
+
+Do NOT translate: code, config files, variable names, code comments.
+##############################################################################
 </important>
 
 <behavior name="task-planning">
@@ -970,6 +1002,22 @@ export async function generateOpenCodeConfig(azureFoundryToken?: string): Promis
           'dist/index.mjs'
         ),
         enabled: true,
+        timeout: 30000,
+      },
+      // Provides translate_to_user_language tool - agent calls when creating user-facing content
+      'translate-content': {
+        type: 'local',
+        command: resolveSkillCommand(
+          tsxCommand,
+          skillsPath,
+          'translate-content',
+          'src/index.ts',
+          'dist/index.mjs'
+        ),
+        enabled: true,
+        environment: {
+          TRANSLATION_API_PORT: String(TRANSLATION_API_PORT),
+        },
         timeout: 30000,
       },
     },

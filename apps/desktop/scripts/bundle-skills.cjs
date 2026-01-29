@@ -23,6 +23,11 @@ const bundles = [
     outfile: 'dist/index.mjs',
   },
   {
+    name: 'translate-content',
+    entry: 'src/index.ts',
+    outfile: 'dist/index.mjs',
+  },
+  {
     name: 'dev-browser-mcp',
     entry: 'src/index.ts',
     outfile: 'dist/index.mjs',
