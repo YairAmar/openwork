@@ -5,7 +5,7 @@ const fs = require('fs');
 const esbuild = require('esbuild');
 const { execSync } = require('child_process');
 
-const skillsDir = path.join(__dirname, '..', 'skills');
+const skillsDir = path.join(__dirname, '..', 'mcp-tools');
 
 // Skills that have runtime dependencies (playwright) that cannot be bundled
 const SKILLS_WITH_RUNTIME_DEPS = ['dev-browser', 'dev-browser-mcp'];
@@ -153,7 +153,7 @@ async function main() {
     await bundleSkill(bundle);
   }
 
-  const shouldOptimize = process.env.CI === 'true' || process.env.OPENWORK_BUNDLED_SKILLS === '1';
+  const shouldOptimize = process.env.CI === 'true' || process.env.OPENWORK_BUNDLED_MCP === '1';
   if (shouldOptimize) {
     console.log('[bundle-skills] Optimizing skill dependencies for packaged build...');
     reinstallProductionDepsForBundledBuild();

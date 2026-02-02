@@ -95,21 +95,21 @@ if (isWindows) {
   runCommand('npx electron-rebuild', 'Running electron-rebuild');
 }
 
-const useBundledSkills = process.env.OPENWORK_BUNDLED_SKILLS === '1' || process.env.CI === 'true';
+const useBundledMcp = process.env.OPENWORK_BUNDLED_MCP === '1' || process.env.CI === 'true';
 
-// Install shared skills runtime dependencies (Playwright) at skills/ root
-if (useBundledSkills) {
-  runCommand('npm --prefix skills install --omit=dev', 'Installing shared skills runtime dependencies');
+// Install shared MCP tools runtime dependencies (Playwright) at mcp-tools/ root
+if (useBundledMcp) {
+  runCommand('npm --prefix mcp-tools install --omit=dev', 'Installing shared MCP tools runtime dependencies');
 }
 
-// Install per-skill dependencies for dev/tsx workflows
-if (!useBundledSkills) {
+// Install per-tool dependencies for dev/tsx workflows
+if (!useBundledMcp) {
   // Install ALL dependencies (including devDependencies) during development
   // because esbuild needs them for bundling. The bundle-skills.cjs script
   // will reinstall with --omit=dev during packaged builds.
-  const skills = ['dev-browser', 'dev-browser-mcp', 'file-permission', 'ask-user-question', 'complete-task', 'start-task'];
-  for (const skill of skills) {
-    runCommand(`npm --prefix skills/${skill} install`, `Installing ${skill} dependencies`);
+  const tools = ['dev-browser', 'dev-browser-mcp', 'file-permission', 'ask-user-question', 'complete-task', 'start-task'];
+  for (const tool of tools) {
+    runCommand(`npm --prefix mcp-tools/${tool} install`, `Installing ${tool} dependencies`);
   }
 }
 

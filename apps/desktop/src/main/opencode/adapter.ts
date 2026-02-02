@@ -1346,7 +1346,10 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
     const verificationSection = input.verification?.length
       ? `\n\n**Verification:**\n${input.verification.map((v, i) => `${i + 1}. ${v}`).join('\n')}`
       : '';
-    const planText = `**Plan:**\n\n**Goal:** ${input.goal}\n\n**Steps:**\n${input.steps.map((s, i) => `${i + 1}. ${s}`).join('\n')}${verificationSection}`;
+    const skillsSection = input.skills?.length
+      ? `\n\n**Skills:** ${input.skills.join(', ')}`
+      : '';
+    const planText = `**Plan:**\n\n**Goal:** ${input.goal}\n\n**Steps:**\n${input.steps.map((s, i) => `${i + 1}. ${s}`).join('\n')}${verificationSection}${skillsSection}`;
 
     const syntheticMessage: OpenCodeMessage = {
       type: 'text',
@@ -1364,6 +1367,7 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
     this.emit('message', syntheticMessage);
     console.log('[OpenCode Adapter] Emitted synthetic plan message');
   }
+
 
   /**
    * Get platform-appropriate shell command
@@ -1431,6 +1435,7 @@ interface StartTaskInput {
   goal: string;
   steps: string[];
   verification: string[];
+  skills: string[];
 }
 
 /**
