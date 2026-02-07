@@ -11,7 +11,7 @@ import { getAccomplish } from '@/lib/accomplish';
 import { cn } from '@/lib/utils';
 import { springs } from '@/lib/animations';
 import TaskLauncherItem from './TaskLauncherItem';
-import { hasAnyReadyProvider } from '@accomplish/shared';
+import { hasAnyReadyProvider } from '@accomplish_ai/agent-core/common';
 import {Input} from "@/components/ui/input";
 
 export default function TaskLauncher() {
@@ -23,6 +23,7 @@ export default function TaskLauncher() {
 
   const {
     isLauncherOpen,
+    launcherInitialPrompt,
     closeLauncher,
     tasks,
     startTask
@@ -48,13 +49,13 @@ export default function TaskLauncher() {
     setSelectedIndex(i => Math.min(i, Math.max(0, totalItems - 1)));
   }, [totalItems]);
 
-  // Reset state when launcher opens
+  // Reset state when launcher opens, use initial prompt if provided
   useEffect(() => {
     if (isLauncherOpen) {
-      setSearchQuery('');
+      setSearchQuery(launcherInitialPrompt || '');
       setSelectedIndex(0);
     }
-  }, [isLauncherOpen]);
+  }, [isLauncherOpen, launcherInitialPrompt]);
 
   const handleOpenChange = useCallback((open: boolean) => {
     if (!open && isLauncherOpen) {

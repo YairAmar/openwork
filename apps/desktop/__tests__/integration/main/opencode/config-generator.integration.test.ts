@@ -26,6 +26,7 @@ import os from 'os';
 // Create temp directories for each test
 let tempUserDataDir: string;
 let tempAppDir: string;
+let tempMonorepoRoot: string;
 
 // Mock only the external electron module
 const mockApp = {
@@ -41,14 +42,114 @@ vi.mock('electron', () => ({
   app: mockApp,
 }));
 
-// Mock permission-api module (internal but exports constants we need)
-vi.mock('@main/permission-api', () => ({
-  PERMISSION_API_PORT: 9999,
-  QUESTION_API_PORT: 9227,
-}));
+// Note: PERMISSION_API_PORT and QUESTION_API_PORT are now imported from @accomplish/shared
+// by config-generator.ts, so no mock needed here
 
-// Mock providerSettings (now uses SQLite which requires native module)
-vi.mock('@main/store/providerSettings', () => ({
+// Mock @accomplish_ai/agent-core (uses SQLite which requires native module)
+// Note: generateConfig mock creates real files in temp directory for integration testing
+vi.mock('@accomplish_ai/agent-core', async () => {
+  const actualFs = await vi.importActual<typeof import('fs')>('fs');
+  const actualPath = await vi.importActual<typeof import('path')>('path');
+
+  return {
+    // buildProviderConfigs - builds provider configurations from API keys
+    buildProviderConfigs: vi.fn(() =>
+      Promise.resolve({
+        providerConfigs: {},
+        enabledProviders: ['anthropic', 'openai', 'google'],
+        modelOverride: undefined,
+      })
+    ),
+
+    // syncApiKeysToOpenCodeAuth - syncs API keys to auth.json
+    syncApiKeysToOpenCodeAuth: vi.fn(() => Promise.resolve()),
+
+    // Config generator - creates real files for integration testing
+    generateConfig: vi.fn((options: {
+      userDataPath: string;
+      mcpToolsPath: string;
+      platform: string;
+      isPackaged: boolean;
+      bundledNodeBinPath?: string;
+      skills: unknown[];
+      providerConfigs: Record<string, unknown>;
+      permissionApiPort: number;
+      questionApiPort: number;
+      enabledProviders: string[];
+      model?: string;
+      smallModel?: string;
+    }) => {
+      const configDir = actualPath.join(options.userDataPath, 'opencode');
+      const configPath = actualPath.join(configDir, 'opencode.json');
+
+      // Create config directory
+      if (!actualFs.existsSync(configDir)) {
+        actualFs.mkdirSync(configDir, { recursive: true });
+      }
+
+      // Build a realistic config object
+      const config = {
+        $schema: 'https://opencode.ai/config.json',
+        default_agent: 'accomplish',
+        permission: { '*': 'allow', todowrite: 'allow' },
+        enabled_providers: options.enabledProviders,
+        agent: {
+          accomplish: {
+            description: 'Browser automation assistant using dev-browser',
+            mode: 'primary',
+            prompt: `<environment>
+Platform: ${options.platform}
+</environment>
+
+## Browser Automation
+Use browser_* tools for web automation. browser_script executes JavaScript.
+
+## FILE PERMISSION WORKFLOW
+Use request_file_permission tool before modifying files.
+
+## user-communication
+Use AskUserQuestion tool for user interaction.`,
+          },
+        },
+        mcp: {
+          'file-permission': {
+            type: 'local',
+            enabled: true,
+            command: ['npx', 'tsx', actualPath.join(options.mcpToolsPath, 'file-permission', 'src', 'index.ts')],
+            environment: {
+              PERMISSION_API_PORT: String(options.permissionApiPort),
+            },
+            timeout: 30000,
+          },
+        },
+      };
+
+      // Write config file
+      actualFs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+
+      return {
+        configPath,
+        systemPrompt: config.agent.accomplish.prompt,
+        mcpServers: config.mcp,
+        providerConfigs: {},
+        enabledProviders: options.enabledProviders,
+      };
+    }),
+    ACCOMPLISH_AGENT_NAME: 'accomplish',
+
+    // Proxy functions
+    ensureAzureFoundryProxy: vi.fn(() => Promise.resolve()),
+    ensureMoonshotProxy: vi.fn(() => Promise.resolve()),
+
+    // Bundled Node.js utilities
+  getBundledNodePaths: vi.fn(() => null),
+  isBundledNodeAvailable: vi.fn(() => false),
+  getNodePath: vi.fn(() => 'node'),
+  getNpmPath: vi.fn(() => 'npm'),
+  getNpxPath: vi.fn(() => 'npx'),
+  logBundledNodeInfo: vi.fn(),
+
+  // Provider settings
   getProviderSettings: vi.fn(() => ({
     activeProviderId: null,
     connectedProviders: {},
@@ -66,10 +167,8 @@ vi.mock('@main/store/providerSettings', () => ({
   getActiveProviderModel: vi.fn(() => null),
   hasReadyProvider: vi.fn(() => false),
   getConnectedProviderIds: vi.fn(() => []),
-}));
 
-// Mock appSettings (now uses SQLite which requires native module)
-vi.mock('@main/store/appSettings', () => ({
+  // App settings
   getDebugMode: vi.fn(() => false),
   setDebugMode: vi.fn(),
   getOnboardingComplete: vi.fn(() => false),
@@ -94,6 +193,20 @@ vi.mock('@main/store/appSettings', () => ({
     lmstudioConfig: null,
   })),
   clearAppSettings: vi.fn(),
+
+  // Constants needed by config-generator
+  PERMISSION_API_PORT: 9226,
+  QUESTION_API_PORT: 9227,
+  };
+});
+
+// Mock skills module (uses SQLite which requires native module)
+vi.mock('@main/skills', () => ({
+  skillsManager: {
+    getEnabled: vi.fn(() => Promise.resolve([])),
+    getAll: vi.fn(() => Promise.resolve([])),
+    initialize: vi.fn(() => Promise.resolve()),
+  },
 }));
 
 describe('OpenCode Config Generator Integration', () => {
@@ -107,13 +220,20 @@ describe('OpenCode Config Generator Integration', () => {
 
     // Create real temp directories for each test
     tempUserDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-config-test-userData-'));
-    tempAppDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-config-test-app-'));
 
-    // Create skills directory structure in temp app dir
-    const skillsDir = path.join(tempAppDir, 'skills');
-    fs.mkdirSync(skillsDir, { recursive: true });
-    fs.mkdirSync(path.join(skillsDir, 'file-permission', 'src'), { recursive: true });
-    fs.writeFileSync(path.join(skillsDir, 'file-permission', 'src', 'index.ts'), '// mock file');
+    // Create a monorepo-like structure in temp dir
+    // This simulates the real structure: monorepo/apps/desktop with packages/agent-core/mcp-tools
+    tempMonorepoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-config-test-monorepo-'));
+    tempAppDir = path.join(tempMonorepoRoot, 'apps', 'desktop');
+    fs.mkdirSync(tempAppDir, { recursive: true });
+
+    // Create mcp-tools directory structure at packages/agent-core/mcp-tools
+    // In development, mcp-tools is at packages/agent-core/mcp-tools relative to apps/desktop
+    // path.join(tempAppDir, '..', '..', 'packages', 'agent-core', 'mcp-tools') now resolves correctly
+    const mcpToolsDir = path.join(tempMonorepoRoot, 'packages', 'agent-core', 'mcp-tools');
+    fs.mkdirSync(mcpToolsDir, { recursive: true });
+    fs.mkdirSync(path.join(mcpToolsDir, 'file-permission', 'src'), { recursive: true });
+    fs.writeFileSync(path.join(mcpToolsDir, 'file-permission', 'src', 'index.ts'), '// mock file');
 
     // Update mock to use temp directories
     mockApp.getAppPath.mockReturnValue(tempAppDir);
@@ -130,24 +250,24 @@ describe('OpenCode Config Generator Integration', () => {
     // Clean up temp directories
     try {
       fs.rmSync(tempUserDataDir, { recursive: true, force: true });
-      fs.rmSync(tempAppDir, { recursive: true, force: true });
+      fs.rmSync(tempMonorepoRoot, { recursive: true, force: true });
     } catch {
       // Ignore cleanup errors
     }
   });
 
-  describe('getSkillsPath()', () => {
+  describe('getMcpToolsPath()', () => {
     describe('Development Mode', () => {
       it('should return skills path relative to app path in dev mode', async () => {
         // Arrange
         mockApp.isPackaged = false;
 
         // Act
-        const { getSkillsPath } = await import('@main/opencode/config-generator');
-        const result = getSkillsPath();
+        const { getMcpToolsPath } = await import('@main/opencode/config-generator');
+        const result = getMcpToolsPath();
 
-        // Assert
-        expect(result).toBe(path.join(tempAppDir, 'skills'));
+        // Assert - mcp-tools is now at packages/agent-core/mcp-tools relative to apps/desktop
+        expect(result).toBe(path.join(tempAppDir, '..', '..', 'packages', 'agent-core', 'mcp-tools'));
       });
     });
 
@@ -160,11 +280,11 @@ describe('OpenCode Config Generator Integration', () => {
         (process as NodeJS.Process & { resourcesPath: string }).resourcesPath = resourcesPath;
 
         // Act
-        const { getSkillsPath } = await import('@main/opencode/config-generator');
-        const result = getSkillsPath();
+        const { getMcpToolsPath } = await import('@main/opencode/config-generator');
+        const result = getMcpToolsPath();
 
         // Assert
-        expect(result).toBe(path.join(resourcesPath, 'skills'));
+        expect(result).toBe(path.join(resourcesPath, 'mcp-tools'));
       });
     });
   });
@@ -244,7 +364,7 @@ describe('OpenCode Config Generator Integration', () => {
       expect(filePermission.enabled).toBe(true);
       expect(filePermission.command[0]).toBe('npx');
       expect(filePermission.command[1]).toBe('tsx');
-      expect(filePermission.environment.PERMISSION_API_PORT).toBe('9999');
+      expect(filePermission.environment.PERMISSION_API_PORT).toBe('9226');
     });
 
     it('should include platform-specific environment instructions', async () => {

@@ -11,7 +11,7 @@ import { getAccomplish } from '../lib/accomplish';
 import { springs, staggerContainer, staggerItem } from '../lib/animations';
 import { Card, CardContent } from '@/components/ui/card';
 import { ChevronDown } from 'lucide-react';
-import { hasAnyReadyProvider } from '@accomplish/shared';
+import { hasAnyReadyProvider } from '@accomplish_ai/agent-core/common';
 
 // Import use case images for proper bundling in production
 import calendarPrepNotesImg from '/assets/usecases/calendar-prep-notes.png';
@@ -41,7 +41,7 @@ export default function HomePage() {
   const [prompt, setPrompt] = useState('');
   const [showExamples, setShowExamples] = useState(true);
   const [showSettingsDialog, setShowSettingsDialog] = useState(false);
-  const [settingsInitialTab, setSettingsInitialTab] = useState<'providers' | 'voice'>('providers');
+  const [settingsInitialTab, setSettingsInitialTab] = useState<'providers' | 'voice' | 'skills'>('providers');
   const { startTask, isLoading, addTaskUpdate, setPermissionRequest } = useTaskStore();
   const navigate = useNavigate();
   const accomplish = getAccomplish();
@@ -113,6 +113,11 @@ export default function HomePage() {
     setShowSettingsDialog(true);
   }, []);
 
+  const handleOpenModelSettings = useCallback(() => {
+    setSettingsInitialTab('providers');
+    setShowSettingsDialog(true);
+  }, []);
+
   const handleApiKeySaved = async () => {
     // API key was saved - close dialog and execute the task
     setShowSettingsDialog(false);
@@ -166,6 +171,12 @@ export default function HomePage() {
                 large={true}
                 autoFocus={true}
                 onOpenSpeechSettings={handleOpenSpeechSettings}
+                onOpenSettings={(tab) => {
+                  setSettingsInitialTab(tab);
+                  setShowSettingsDialog(true);
+                }}
+                onOpenModelSettings={handleOpenModelSettings}
+                hideModelWhenNoModel={true}
               />
             </CardContent>
 

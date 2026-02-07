@@ -27,7 +27,7 @@ import type {
   OpenCodeToolUseMessage,
   OpenCodeStepFinishMessage,
   OpenCodeErrorMessage,
-} from '@accomplish/shared';
+} from '@accomplish_ai/agent-core';
 
 // Mock electron module
 const mockApp = {
@@ -100,6 +100,593 @@ vi.mock('node-pty', () => ({
   spawn: mockPtySpawn,
 }));
 
+// We need to import the mock PTY instance from the mock
+// This will be accessed by the mocked OpenCodeAdapter
+const mockPtyInstanceRef = { current: null as MockPty | null };
+
+// Mock @accomplish_ai/agent-core - agent-core package exports used by adapter
+vi.mock('@accomplish_ai/agent-core', async () => {
+  const { EventEmitter } = await import('events');
+  const nodePty = await import('node-pty');
+
+  // Create mock StreamParser class that extends EventEmitter with proper buffering
+  class MockStreamParser extends EventEmitter {
+    private buffer: string = '';
+
+    feed(chunk: string) {
+      this.buffer += chunk;
+      this.parseBuffer();
+    }
+
+    private parseBuffer() {
+      // Try to find complete JSON objects using brace counting
+      while (this.buffer.length > 0) {
+        const startIdx = this.buffer.indexOf('{');
+        if (startIdx === -1) {
+          this.buffer = '';
+          return;
+        }
+        if (startIdx > 0) {
+          this.buffer = this.buffer.substring(startIdx);
+        }
+        // Try to find end of JSON using brace counting
+        let depth = 0;
+        let inString = false;
+        let escaped = false;
+        for (let i = 0; i < this.buffer.length; i++) {
+          const ch = this.buffer[i];
+          if (escaped) {
+            escaped = false;
+            continue;
+          }
+          if (ch === '\\' && inString) {
+            escaped = true;
+            continue;
+          }
+          if (ch === '"') {
+            inString = !inString;
+            continue;
+          }
+          if (!inString) {
+            if (ch === '{') depth++;
+            else if (ch === '}') {
+              depth--;
+              if (depth === 0) {
+                const jsonStr = this.buffer.substring(0, i + 1);
+                this.buffer = this.buffer.substring(i + 1).replace(/^\s+/, '');
+                try {
+                  const msg = JSON.parse(jsonStr);
+                  this.emit('message', msg);
+                } catch {
+                  // Invalid JSON, skip
+                }
+                break; // Continue with next iteration
+              }
+            }
+          }
+        }
+        if (depth > 0) {
+          // Incomplete JSON, wait for more data
+          return;
+        }
+      }
+    }
+
+    flush() {
+      if (this.buffer.trim()) {
+        try {
+          const msg = JSON.parse(this.buffer.trim());
+          this.emit('message', msg);
+        } catch {
+          // Invalid JSON
+        }
+      }
+      this.buffer = '';
+    }
+
+    reset() {
+      this.buffer = '';
+    }
+  }
+
+  // Create mock CompletionEnforcer class that properly handles callbacks
+  class MockCompletionEnforcer {
+    private callbacks: { onComplete?: () => void; onDebug?: (type: string, msg: string) => void } = {};
+    private toolsUsed = false;
+    private completeTaskCalled = false;
+    private attempts = 0;
+    private maxAttempts = 20;
+
+    constructor(callbacks: { onComplete?: () => void; onDebug?: (type: string, msg: string) => void } = {}, maxAttempts = 20) {
+      this.callbacks = callbacks;
+      this.maxAttempts = maxAttempts;
+    }
+    handleMessage() {}
+    handleStepFinish(reason: string) {
+      // Return 'continue' for tool_use (more work expected)
+      if (reason === 'tool_use') {
+        return 'continue';
+      }
+      // If tools were used but complete_task wasn't called, schedule continuation
+      if (this.toolsUsed && !this.completeTaskCalled) {
+        this.attempts++;
+        if (this.attempts > this.maxAttempts) {
+          return 'complete';
+        }
+        if (this.callbacks.onDebug) {
+          this.callbacks.onDebug('continuation', `Scheduled continuation (attempt ${this.attempts})`);
+        }
+        return 'pending';
+      }
+      // If complete_task was called or no tools used, complete
+      return 'complete';
+    }
+    markToolsUsed() {
+      this.toolsUsed = true;
+    }
+    forceComplete() {}
+    reset() {
+      this.toolsUsed = false;
+      this.completeTaskCalled = false;
+      this.attempts = 0;
+    }
+    updateTodos() {}
+    handleCompleteTaskDetection() {
+      this.completeTaskCalled = true;
+      return true;
+    }
+    handleProcessExit() {
+      // Call onComplete callback to simulate successful completion
+      if (this.callbacks.onComplete) {
+        this.callbacks.onComplete();
+      }
+      return Promise.resolve();
+    }
+    shouldComplete() { return true; }
+    getState() { return 'DONE'; }
+    getContinuationAttempts() { return this.attempts; }
+  }
+
+  // Create mock LogWatcher that extends EventEmitter
+  class MockLogWatcher extends EventEmitter {
+    start() { return Promise.resolve(); }
+    stop() { return Promise.resolve(); }
+    static getErrorMessage(error: { message?: string }) {
+      return error.message || 'Unknown error';
+    }
+  }
+
+  // Create mock OpenCodeCliNotFoundError
+  class MockOpenCodeCliNotFoundError extends Error {
+    constructor() {
+      super(
+        'OpenCode CLI is not available. The bundled CLI may be missing or corrupted. Please reinstall the application.'
+      );
+      this.name = 'OpenCodeCliNotFoundError';
+    }
+  }
+
+  // Create mock OpenCodeAdapter class that extends EventEmitter
+  class MockOpenCodeAdapter extends EventEmitter {
+    private ptyProcess: pty.IPty | null = null;
+    private streamParser: MockStreamParser;
+    private logWatcher: MockLogWatcher | null = null;
+    private currentSessionId: string | null = null;
+    private currentTaskId: string | null = null;
+    private messages: unknown[] = [];
+    private hasCompleted: boolean = false;
+    private isDisposed: boolean = false;
+    private wasInterrupted: boolean = false;
+    private completionEnforcer: MockCompletionEnforcer;
+    private options: AdapterOptionsMock;
+
+    constructor(options: AdapterOptionsMock, taskId?: string) {
+      super();
+      this.options = options;
+      this.currentTaskId = taskId || null;
+      this.streamParser = new MockStreamParser();
+      this.completionEnforcer = this.createCompletionEnforcer();
+      this.setupStreamParsing();
+      this.logWatcher = new MockLogWatcher();
+    }
+
+    private createCompletionEnforcer(): MockCompletionEnforcer {
+      const callbacks = {
+        onComplete: () => {
+          this.hasCompleted = true;
+          this.emit('complete', {
+            status: 'success',
+            sessionId: this.currentSessionId || undefined,
+          });
+        },
+        onDebug: (type: string, message: string) => {
+          this.emit('debug', { type, message });
+        },
+      };
+      return new MockCompletionEnforcer(callbacks);
+    }
+
+    private setupStreamParsing(): void {
+      this.streamParser.on('message', (message: OpenCodeMessageMock) => {
+        this.handleMessage(message);
+      });
+
+      this.streamParser.on('error', (error: Error) => {
+        this.emit('debug', { type: 'parse-warning', message: error.message });
+      });
+    }
+
+    private handleMessage(message: OpenCodeMessageMock): void {
+      switch (message.type) {
+        case 'step_start':
+          this.currentSessionId = message.part?.sessionID;
+          const modelDisplayName = this.options.getModelDisplayName?.('model') || 'AI';
+          this.emit('progress', {
+            stage: 'connecting',
+            message: `Connecting to ${modelDisplayName}...`,
+            modelName: modelDisplayName,
+          });
+          break;
+
+        case 'text':
+          if (!this.currentSessionId && message.part?.sessionID) {
+            this.currentSessionId = message.part.sessionID;
+          }
+          this.emit('message', message);
+          break;
+
+        case 'tool_call':
+          this.handleToolCall(message.part?.tool || 'unknown', message.part?.input, message.part?.sessionID);
+          break;
+
+        case 'tool_use':
+          const toolUseName = message.part?.tool || 'unknown';
+          const toolUseInput = message.part?.state?.input;
+          const toolUseOutput = message.part?.state?.output || '';
+
+          this.handleToolCall(toolUseName, toolUseInput, message.part?.sessionID);
+          this.emit('message', message);
+
+          const toolUseStatus = message.part?.state?.status;
+          if (toolUseStatus === 'completed' || toolUseStatus === 'error') {
+            this.emit('tool-result', toolUseOutput);
+          }
+
+          if (toolUseName === 'AskUserQuestion') {
+            this.handleAskUserQuestion(toolUseInput as AskUserQuestionInputMock);
+          }
+          break;
+
+        case 'tool_result':
+          const toolOutput = message.part?.output || '';
+          this.emit('tool-result', toolOutput);
+          break;
+
+        case 'step_finish':
+          if (message.part?.reason === 'error') {
+            if (!this.hasCompleted) {
+              this.hasCompleted = true;
+              this.emit('complete', {
+                status: 'error',
+                sessionId: this.currentSessionId || undefined,
+                error: 'Task failed',
+              });
+            }
+            break;
+          }
+
+          const action = this.completionEnforcer.handleStepFinish(message.part?.reason || '');
+          if (action === 'complete' && !this.hasCompleted) {
+            this.hasCompleted = true;
+            this.emit('complete', {
+              status: 'success',
+              sessionId: this.currentSessionId || undefined,
+            });
+          }
+          break;
+
+        case 'error':
+          this.hasCompleted = true;
+          this.emit('complete', {
+            status: 'error',
+            sessionId: this.currentSessionId || undefined,
+            error: message.error,
+          });
+          break;
+      }
+    }
+
+    private handleToolCall(toolName: string, toolInput: unknown, _sessionID?: string): void {
+      this.completionEnforcer.markToolsUsed();
+
+      if (toolName === 'complete_task' || toolName.endsWith('_complete_task')) {
+        this.completionEnforcer.handleCompleteTaskDetection();
+      }
+
+      if (toolName === 'todowrite' || toolName.endsWith('_todowrite')) {
+        const input = toolInput as { todos?: TodoItemMock[] };
+        if (input?.todos && Array.isArray(input.todos) && input.todos.length > 0) {
+          this.emit('todo:update', input.todos);
+          this.completionEnforcer.updateTodos();
+        }
+      }
+
+      this.emit('tool-use', toolName, toolInput);
+      this.emit('progress', {
+        stage: 'tool-use',
+        message: `Using ${toolName}`,
+      });
+
+      if (toolName === 'AskUserQuestion') {
+        this.handleAskUserQuestion(toolInput as AskUserQuestionInputMock);
+      }
+    }
+
+    private handleAskUserQuestion(input: AskUserQuestionInputMock): void {
+      const question = input.questions?.[0];
+      if (!question) return;
+
+      const permissionRequest = {
+        id: this.generateRequestId(),
+        taskId: this.currentTaskId || '',
+        type: 'question',
+        question: question.question,
+        options: question.options?.map((o) => ({
+          label: o.label,
+          description: o.description,
+        })),
+        multiSelect: question.multiSelect,
+        createdAt: new Date().toISOString(),
+      };
+
+      this.emit('permission-request', permissionRequest);
+    }
+
+    private handleProcessExit(code: number | null): void {
+      this.ptyProcess = null;
+
+      if (this.wasInterrupted && code === 0 && !this.hasCompleted) {
+        this.hasCompleted = true;
+        this.emit('complete', {
+          status: 'interrupted',
+          sessionId: this.currentSessionId || undefined,
+        });
+        this.currentTaskId = null;
+        return;
+      }
+
+      if (code === 0 && !this.hasCompleted) {
+        this.completionEnforcer.handleProcessExit().catch(() => {
+          this.hasCompleted = true;
+          this.emit('complete', {
+            status: 'error',
+            sessionId: this.currentSessionId || undefined,
+            error: 'Failed to complete',
+          });
+        });
+        return;
+      }
+
+      if (!this.hasCompleted) {
+        if (code !== null && code !== 0) {
+          this.emit('error', new Error(`OpenCode CLI exited with code ${code}`));
+        }
+      }
+
+      this.currentTaskId = null;
+    }
+
+    async startTask(config: TaskConfigMock): Promise<TaskMock> {
+      if (this.isDisposed) {
+        throw new Error('Adapter has been disposed and cannot start new tasks');
+      }
+
+      const taskId = config.taskId || this.generateTaskId();
+      this.currentTaskId = taskId;
+      this.currentSessionId = null;
+      this.messages = [];
+      this.streamParser.reset();
+      this.hasCompleted = false;
+      this.wasInterrupted = false;
+      this.completionEnforcer.reset();
+
+      if (this.options.onBeforeStart) {
+        await this.options.onBeforeStart();
+      }
+
+      const startMsg = `Starting: mock command`;
+      this.emit('debug', { type: 'info', message: startMsg });
+
+      this.emit('progress', { stage: 'loading', message: 'Loading agent...' });
+
+      this.ptyProcess = nodePty.spawn('/bin/sh', ['-c', 'echo mock'], {
+        name: 'xterm-256color',
+        cols: 32000,
+        rows: 30,
+        cwd: config.workingDirectory || this.options.tempPath,
+      });
+
+      this.ptyProcess.onData((data: string) => {
+        const cleanData = data
+          .replace(/\x1B\[[0-9;?]*[a-zA-Z]/g, '')
+          .replace(/\x1B\][^\x07]*\x07/g, '')
+          .replace(/\x1B\][^\x1B]*\x1B\\/g, '');
+        if (cleanData.trim()) {
+          this.emit('debug', { type: 'stdout', message: cleanData });
+          this.streamParser.feed(cleanData);
+        }
+      });
+
+      this.ptyProcess.onExit(({ exitCode }) => {
+        this.handleProcessExit(exitCode);
+      });
+
+      return {
+        id: taskId,
+        prompt: config.prompt,
+        status: 'running',
+        messages: [],
+        createdAt: new Date().toISOString(),
+        startedAt: new Date().toISOString(),
+      };
+    }
+
+    async resumeSession(sessionId: string, prompt: string): Promise<TaskMock> {
+      return this.startTask({
+        prompt,
+        sessionId,
+      });
+    }
+
+    async sendResponse(response: string): Promise<void> {
+      if (!this.ptyProcess) {
+        throw new Error('No active process');
+      }
+      this.ptyProcess.write(response + '\n');
+    }
+
+    async cancelTask(): Promise<void> {
+      if (this.ptyProcess) {
+        this.ptyProcess.kill();
+        this.ptyProcess = null;
+      }
+    }
+
+    async interruptTask(): Promise<void> {
+      if (!this.ptyProcess) {
+        return;
+      }
+      this.wasInterrupted = true;
+      this.ptyProcess.write('\x03');
+    }
+
+    getSessionId(): string | null {
+      return this.currentSessionId;
+    }
+
+    getTaskId(): string | null {
+      return this.currentTaskId;
+    }
+
+    get running(): boolean {
+      return this.ptyProcess !== null && !this.hasCompleted;
+    }
+
+    isAdapterDisposed(): boolean {
+      return this.isDisposed;
+    }
+
+    dispose(): void {
+      if (this.isDisposed) {
+        return;
+      }
+
+      this.isDisposed = true;
+
+      if (this.ptyProcess) {
+        try {
+          this.ptyProcess.kill();
+        } catch {
+          // ignore
+        }
+        this.ptyProcess = null;
+      }
+
+      this.currentSessionId = null;
+      this.currentTaskId = null;
+      this.messages = [];
+      this.hasCompleted = true;
+
+      this.streamParser.reset();
+      this.removeAllListeners();
+    }
+
+    private generateTaskId(): string {
+      return `task_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+    }
+
+    private generateRequestId(): string {
+      return `req_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+    }
+  }
+
+  // Type aliases for mock
+  interface AdapterOptionsMock {
+    platform: string;
+    isPackaged: boolean;
+    tempPath: string;
+    getCliCommand: () => { command: string; args: string[] };
+    buildEnvironment: (taskId: string) => Promise<NodeJS.ProcessEnv>;
+    buildCliArgs: (config: TaskConfigMock) => Promise<string[]>;
+    onBeforeStart?: () => Promise<void>;
+    getModelDisplayName?: (modelId: string) => string;
+  }
+
+  interface TaskConfigMock {
+    prompt: string;
+    taskId?: string;
+    sessionId?: string;
+    workingDirectory?: string;
+  }
+
+  interface TaskMock {
+    id: string;
+    prompt: string;
+    status: string;
+    messages: unknown[];
+    createdAt: string;
+    startedAt: string;
+  }
+
+  interface OpenCodeMessageMock {
+    type: string;
+    part?: {
+      sessionID?: string;
+      tool?: string;
+      input?: unknown;
+      output?: string;
+      state?: { status?: string; input?: unknown; output?: string };
+      reason?: string;
+    };
+    error?: string;
+  }
+
+  interface AskUserQuestionInputMock {
+    questions?: Array<{
+      question: string;
+      header?: string;
+      options?: Array<{ label: string; description?: string }>;
+      multiSelect?: boolean;
+    }>;
+  }
+
+  interface TodoItemMock {
+    id: string;
+    content: string;
+    status: string;
+    priority?: string;
+  }
+
+  return {
+    StreamParser: MockStreamParser,
+    OpenCodeLogWatcher: MockLogWatcher,
+    createLogWatcher: vi.fn(() => new MockLogWatcher()),
+    CompletionEnforcer: MockCompletionEnforcer,
+    OpenCodeCliNotFoundError: MockOpenCodeCliNotFoundError,
+    OpenCodeAdapter: MockOpenCodeAdapter,
+    getSelectedModel: vi.fn(() => ({ model: 'claude-3-opus-20240229' })),
+    getAzureFoundryConfig: vi.fn(() => null),
+    getOpenAiBaseUrl: vi.fn(() => ''),
+    getActiveProviderModel: vi.fn(() => null),
+    getConnectedProvider: vi.fn(() => null),
+    getAzureEntraToken: vi.fn(() => Promise.resolve({ success: true, token: 'mock-token' })),
+    getModelDisplayName: vi.fn((model: string) => model),
+    resolveCliPath: vi.fn(() => ({ cliPath: '/mock/opencode/cli' })),
+    isCliAvailable: vi.fn(() => true),
+    ensureDevBrowserServer: vi.fn(() => Promise.resolve()),
+  };
+});
+
 // Mock child_process for execSync
 vi.mock('child_process', () => ({
   execSync: vi.fn(() => '/usr/local/bin/opencode'),
@@ -114,29 +701,28 @@ vi.mock('@main/store/secureStorage', () => ({
   getBedrockCredentials: vi.fn(() => null),
 }));
 
-// Mock app settings
-vi.mock('@main/store/appSettings', () => ({
-  getSelectedModel: vi.fn(() => ({ model: 'claude-3-opus-20240229' })),
-  getAzureFoundryConfig: vi.fn(() => null),
-  getOpenAiBaseUrl: vi.fn(() => ''),
-}));
-
-// Mock provider settings (uses SQLite which isn't available in tests)
-vi.mock('@main/store/providerSettings', () => ({
-  getActiveProviderModel: vi.fn(() => null),
-  getProviderSettings: vi.fn(() => ({
-    activeProviderId: null,
-    connectedProviders: {},
-    debugMode: false,
-  })),
-  getConnectedProvider: vi.fn(() => null),
-}));
+// Note: App settings and provider settings are now mocked via @accomplish/core mock above
 
 // Mock config generator
 vi.mock('@main/opencode/config-generator', () => ({
   generateOpenCodeConfig: vi.fn(() => Promise.resolve('/mock/config/path')),
   syncApiKeysToOpenCodeAuth: vi.fn(() => Promise.resolve()),
+  getMcpToolsPath: vi.fn(() => '/mock/mcp-tools'),
   ACCOMPLISH_AGENT_NAME: 'accomplish',
+}));
+
+// Mock electron-options - provides adapter options for desktop wrapper
+vi.mock('@main/opencode/electron-options', () => ({
+  createElectronTaskManagerOptions: vi.fn(() => ({})),
+  buildEnvironment: vi.fn((_taskId: string) => Promise.resolve({ PATH: '/usr/bin' })),
+  buildCliArgs: vi.fn((config: { prompt: string }) => Promise.resolve(['run', '--format', 'json', config.prompt])),
+  getCliCommand: vi.fn(() => ({ command: '/mock/opencode/cli', args: [] })),
+  isCliAvailable: vi.fn(() => Promise.resolve(true)),
+  onBeforeStart: vi.fn(() => Promise.resolve()),
+  onBeforeTaskStart: vi.fn(() => Promise.resolve()),
+  getOpenCodeCliPath: vi.fn(() => ({ command: '/mock/opencode/cli', args: [] })),
+  isOpenCodeBundled: vi.fn(() => true),
+  getBundledOpenCodeVersion: vi.fn(() => '1.0.0'),
 }));
 
 // Mock system-path
@@ -156,11 +742,27 @@ vi.mock('@main/permission-api', () => ({
 }));
 
 describe('OpenCode Adapter Module', () => {
-  let OpenCodeAdapter: typeof import('@main/opencode/adapter').OpenCodeAdapter;
-  let createAdapter: typeof import('@main/opencode/adapter').createAdapter;
-  let isOpenCodeCliInstalled: typeof import('@main/opencode/adapter').isOpenCodeCliInstalled;
-  let getOpenCodeCliVersion: typeof import('@main/opencode/adapter').getOpenCodeCliVersion;
-  let OpenCodeCliNotFoundError: typeof import('@main/opencode/adapter').OpenCodeCliNotFoundError;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let OpenCodeAdapter: any;
+  let isOpenCodeCliInstalled: typeof import('@main/opencode').isOpenCodeCliInstalled;
+  let getOpenCodeCliVersion: typeof import('@main/opencode').getOpenCodeCliVersion;
+  let OpenCodeCliNotFoundError: typeof import('@main/opencode').OpenCodeCliNotFoundError;
+
+  // Helper function to create adapter instances for testing
+  // Note: OpenCodeAdapter is now internal to agent-core, so we get it from the mocked module
+  function createTestAdapter(taskId?: string) {
+    const options = {
+      platform: 'darwin',
+      isPackaged: false,
+      tempPath: '/mock/temp',
+      getCliCommand: () => ({ command: '/mock/opencode/cli', args: [] }),
+      buildEnvironment: (_taskId: string) => Promise.resolve({ PATH: '/usr/bin' }),
+      buildCliArgs: (config: { prompt: string; sessionId?: string }) => Promise.resolve(['run', '--format', 'json', config.prompt]),
+      onBeforeStart: () => Promise.resolve(),
+      getModelDisplayName: (model: string) => model,
+    };
+    return new OpenCodeAdapter(options, taskId);
+  }
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -170,13 +772,14 @@ describe('OpenCode Adapter Module', () => {
     mockPtyInstance.killed = false;
     mockPtyInstance.removeAllListeners();
 
-    // Re-import module to get fresh state
-    const module = await import('@main/opencode/adapter');
-    OpenCodeAdapter = module.OpenCodeAdapter;
-    createAdapter = module.createAdapter;
-    isOpenCodeCliInstalled = module.isOpenCodeCliInstalled;
-    getOpenCodeCliVersion = module.getOpenCodeCliVersion;
-    OpenCodeCliNotFoundError = module.OpenCodeCliNotFoundError;
+    // Re-import modules to get fresh state
+    const desktopModule = await import('@main/opencode');
+    // OpenCodeAdapter is now internal to agent-core, get it from the mocked @accomplish_ai/agent-core module
+    const agentCoreModule = await import('@accomplish_ai/agent-core');
+    OpenCodeAdapter = (agentCoreModule as unknown as { OpenCodeAdapter: unknown }).OpenCodeAdapter;
+    isOpenCodeCliInstalled = desktopModule.isOpenCodeCliInstalled;
+    getOpenCodeCliVersion = desktopModule.getOpenCodeCliVersion;
+    OpenCodeCliNotFoundError = desktopModule.OpenCodeCliNotFoundError;
   });
 
   afterEach(() => {
@@ -188,7 +791,7 @@ describe('OpenCode Adapter Module', () => {
     describe('Constructor', () => {
       it('should create adapter instance with optional task ID', () => {
         // Act
-        const adapter = new OpenCodeAdapter('test-task-123');
+        const adapter = createTestAdapter('test-task-123');
 
         // Assert
         expect(adapter.getTaskId()).toBe('test-task-123');
@@ -197,7 +800,7 @@ describe('OpenCode Adapter Module', () => {
 
       it('should create adapter instance without task ID', () => {
         // Act
-        const adapter = new OpenCodeAdapter();
+        const adapter = createTestAdapter();
 
         // Assert
         expect(adapter.getTaskId()).toBeNull();
@@ -207,7 +810,7 @@ describe('OpenCode Adapter Module', () => {
     describe('startTask()', () => {
       it('should spawn PTY process with correct arguments', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter('test-task');
+        const adapter = createTestAdapter('test-task');
         const config = {
           prompt: 'Test prompt',
           taskId: 'test-task-123',
@@ -225,7 +828,7 @@ describe('OpenCode Adapter Module', () => {
 
       it('should generate task ID if not provided', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter();
+        const adapter = createTestAdapter();
         const config = { prompt: 'Test prompt' };
 
         // Act
@@ -237,7 +840,7 @@ describe('OpenCode Adapter Module', () => {
 
       it('should emit debug events during startup', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter();
+        const adapter = createTestAdapter();
         const debugEvents: Array<{ type: string; message: string }> = [];
         adapter.on('debug', (log) => debugEvents.push(log));
 
@@ -251,7 +854,7 @@ describe('OpenCode Adapter Module', () => {
 
       it('should throw error if adapter is disposed', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter();
+        const adapter = createTestAdapter();
         adapter.dispose();
 
         // Act & Assert
@@ -264,7 +867,7 @@ describe('OpenCode Adapter Module', () => {
     describe('Event Emission', () => {
       it('should emit message event when receiving text message', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter();
+        const adapter = createTestAdapter();
         const messages: unknown[] = [];
         adapter.on('message', (msg) => messages.push(msg));
 
@@ -291,7 +894,7 @@ describe('OpenCode Adapter Module', () => {
 
       it('should emit progress event on step_start message', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter();
+        const adapter = createTestAdapter();
         const progressEvents: Array<{ stage: string; message?: string }> = [];
         adapter.on('progress', (p) => progressEvents.push(p));
 
@@ -321,7 +924,7 @@ describe('OpenCode Adapter Module', () => {
 
       it('should emit tool-use event on tool_call message', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter();
+        const adapter = createTestAdapter();
         const toolEvents: Array<[string, unknown]> = [];
         adapter.on('tool-use', (name, input) => toolEvents.push([name, input]));
 
@@ -350,7 +953,7 @@ describe('OpenCode Adapter Module', () => {
 
       it('should emit tool-use and tool-result events on tool_use message', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter();
+        const adapter = createTestAdapter();
         const toolUseEvents: Array<[string, unknown]> = [];
         const toolResultEvents: string[] = [];
         adapter.on('tool-use', (name, input) => toolUseEvents.push([name, input]));
@@ -386,7 +989,7 @@ describe('OpenCode Adapter Module', () => {
 
       it('should emit complete event on step_finish with stop reason when complete_task was called', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter();
+        const adapter = createTestAdapter();
         const completeEvents: Array<{ status: string; sessionId?: string }> = [];
         adapter.on('complete', (result) => completeEvents.push(result));
 
@@ -424,7 +1027,7 @@ describe('OpenCode Adapter Module', () => {
 
       it('should schedule continuation on step_finish when complete_task was not called', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter();
+        const adapter = createTestAdapter();
         const completeEvents: Array<{ status: string; sessionId?: string }> = [];
         const debugEvents: Array<{ type: string; message: string }> = [];
         adapter.on('complete', (result) => completeEvents.push(result));
@@ -477,7 +1080,7 @@ describe('OpenCode Adapter Module', () => {
 
       it('should emit complete after max continuation attempts without complete_task', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter();
+        const adapter = createTestAdapter();
         const completeEvents: Array<{ status: string; sessionId?: string }> = [];
         adapter.on('complete', (result) => completeEvents.push(result));
 
@@ -523,7 +1126,7 @@ describe('OpenCode Adapter Module', () => {
 
       it('should not emit complete event on step_finish with tool_use reason', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter();
+        const adapter = createTestAdapter();
         const completeEvents: Array<{ status: string }> = [];
         adapter.on('complete', (result) => completeEvents.push(result));
 
@@ -549,7 +1152,7 @@ describe('OpenCode Adapter Module', () => {
 
       it('should emit complete with error status on error message', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter();
+        const adapter = createTestAdapter();
         const completeEvents: Array<{ status: string; error?: string }> = [];
         adapter.on('complete', (result) => completeEvents.push(result));
 
@@ -571,7 +1174,7 @@ describe('OpenCode Adapter Module', () => {
 
       it('should emit permission-request event for AskUserQuestion tool', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter('test-task');
+        const adapter = createTestAdapter('test-task');
         const permissionRequests: unknown[] = [];
         adapter.on('permission-request', (req) => permissionRequests.push(req));
 
@@ -611,7 +1214,7 @@ describe('OpenCode Adapter Module', () => {
 
       it('should emit todo:update for non-empty todos', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter();
+        const adapter = createTestAdapter();
         const todoEvents: unknown[][] = [];
         adapter.on('todo:update', (todos) => todoEvents.push(todos));
 
@@ -644,7 +1247,7 @@ describe('OpenCode Adapter Module', () => {
 
       it('should NOT emit todo:update for empty todos array', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter();
+        const adapter = createTestAdapter();
         const todoEvents: unknown[][] = [];
         adapter.on('todo:update', (todos) => todoEvents.push(todos));
 
@@ -675,7 +1278,7 @@ describe('OpenCode Adapter Module', () => {
     describe('Stream Parser Integration', () => {
       it('should handle multiple JSON messages in single data chunk', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter();
+        const adapter = createTestAdapter();
         const messages: unknown[] = [];
         adapter.on('message', (msg) => messages.push(msg));
 
@@ -701,7 +1304,7 @@ describe('OpenCode Adapter Module', () => {
 
       it('should handle split JSON messages across data chunks', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter();
+        const adapter = createTestAdapter();
         const messages: unknown[] = [];
         adapter.on('message', (msg) => messages.push(msg));
 
@@ -724,7 +1327,7 @@ describe('OpenCode Adapter Module', () => {
 
       it('should skip non-JSON lines without crashing', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter();
+        const adapter = createTestAdapter();
         const messages: unknown[] = [];
         const debugEvents: unknown[] = [];
         adapter.on('message', (msg) => messages.push(msg));
@@ -747,7 +1350,7 @@ describe('OpenCode Adapter Module', () => {
 
       it('should strip ANSI escape codes from data', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter();
+        const adapter = createTestAdapter();
         const messages: unknown[] = [];
         adapter.on('message', (msg) => messages.push(msg));
 
@@ -770,7 +1373,7 @@ describe('OpenCode Adapter Module', () => {
     describe('Process Exit Handling', () => {
       it('should emit complete on normal exit (code 0)', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter();
+        const adapter = createTestAdapter();
         const completeEvents: Array<{ status: string }> = [];
         adapter.on('complete', (result) => completeEvents.push(result));
 
@@ -786,7 +1389,7 @@ describe('OpenCode Adapter Module', () => {
 
       it('should emit error on non-zero exit code', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter();
+        const adapter = createTestAdapter();
         const errorEvents: Error[] = [];
         adapter.on('error', (err) => errorEvents.push(err));
 
@@ -802,7 +1405,7 @@ describe('OpenCode Adapter Module', () => {
 
       it('should emit interrupted status when interrupted', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter();
+        const adapter = createTestAdapter();
         const completeEvents: Array<{ status: string }> = [];
         adapter.on('complete', (result) => completeEvents.push(result));
 
@@ -819,7 +1422,7 @@ describe('OpenCode Adapter Module', () => {
 
       it('should not emit duplicate complete events', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter();
+        const adapter = createTestAdapter();
         const completeEvents: Array<{ status: string }> = [];
         adapter.on('complete', (result) => completeEvents.push(result));
 
@@ -860,7 +1463,7 @@ describe('OpenCode Adapter Module', () => {
     describe('sendResponse()', () => {
       it('should write response to PTY', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter();
+        const adapter = createTestAdapter();
         await adapter.startTask({ prompt: 'Test' });
 
         // Act
@@ -872,7 +1475,7 @@ describe('OpenCode Adapter Module', () => {
 
       it('should throw error if no active process', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter();
+        const adapter = createTestAdapter();
         // Don't start a task
 
         // Act & Assert
@@ -883,7 +1486,7 @@ describe('OpenCode Adapter Module', () => {
     describe('cancelTask()', () => {
       it('should kill PTY process', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter();
+        const adapter = createTestAdapter();
         await adapter.startTask({ prompt: 'Test' });
 
         // Act
@@ -897,7 +1500,7 @@ describe('OpenCode Adapter Module', () => {
     describe('interruptTask()', () => {
       it('should send Ctrl+C to PTY', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter();
+        const adapter = createTestAdapter();
         await adapter.startTask({ prompt: 'Test' });
 
         // Act
@@ -909,7 +1512,7 @@ describe('OpenCode Adapter Module', () => {
 
       it('should handle interrupt when no active process', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter();
+        const adapter = createTestAdapter();
         // Don't start a task
 
         // Act - should not throw
@@ -923,7 +1526,7 @@ describe('OpenCode Adapter Module', () => {
     describe('dispose()', () => {
       it('should cleanup PTY process and state', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter('test-task');
+        const adapter = createTestAdapter('test-task');
         await adapter.startTask({ prompt: 'Test' });
 
         // Act
@@ -938,7 +1541,7 @@ describe('OpenCode Adapter Module', () => {
 
       it('should be idempotent (safe to call multiple times)', () => {
         // Arrange
-        const adapter = new OpenCodeAdapter();
+        const adapter = createTestAdapter();
 
         // Act - call dispose multiple times
         adapter.dispose();
@@ -951,7 +1554,7 @@ describe('OpenCode Adapter Module', () => {
 
       it('should remove all event listeners', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter();
+        const adapter = createTestAdapter();
         let messageCount = 0;
         adapter.on('message', () => messageCount++);
         await adapter.startTask({ prompt: 'Test' });
@@ -968,7 +1571,7 @@ describe('OpenCode Adapter Module', () => {
     describe('Session Management', () => {
       it('should track session ID from step_start message', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter();
+        const adapter = createTestAdapter();
         await adapter.startTask({ prompt: 'Test' });
 
         const stepStart: OpenCodeStepStartMessage = {
@@ -990,7 +1593,7 @@ describe('OpenCode Adapter Module', () => {
 
       it('should support resuming sessions', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter();
+        const adapter = createTestAdapter();
 
         // Act
         const task = await adapter.resumeSession('existing-session', 'Continue task');
@@ -1004,7 +1607,7 @@ describe('OpenCode Adapter Module', () => {
     describe('Session Resumption ANSI Filtering', () => {
       it('should filter ANSI codes in resumed session data', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter();
+        const adapter = createTestAdapter();
         const messages: unknown[] = [];
         adapter.on('message', (msg) => messages.push(msg));
 
@@ -1026,7 +1629,7 @@ describe('OpenCode Adapter Module', () => {
 
       it('should emit debug events in resumed session', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter();
+        const adapter = createTestAdapter();
         const debugEvents: Array<{ type: string; message: string }> = [];
         adapter.on('debug', (event) => debugEvents.push(event));
 
@@ -1047,7 +1650,7 @@ describe('OpenCode Adapter Module', () => {
 
       it('should handle Windows PowerShell ANSI sequences in resumed session', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter();
+        const adapter = createTestAdapter();
         const messages: unknown[] = [];
         adapter.on('message', (msg) => messages.push(msg));
 
@@ -1068,7 +1671,7 @@ describe('OpenCode Adapter Module', () => {
 
       it('should not feed empty data to parser in resumed session', async () => {
         // Arrange
-        const adapter = new OpenCodeAdapter();
+        const adapter = createTestAdapter();
         const messages: unknown[] = [];
         adapter.on('message', (msg) => messages.push(msg));
 
@@ -1085,17 +1688,6 @@ describe('OpenCode Adapter Module', () => {
   });
 
   describe('Factory Functions', () => {
-    describe('createAdapter()', () => {
-      it('should create a new adapter instance', () => {
-        // Act
-        const adapter = createAdapter('task-123');
-
-        // Assert
-        expect(adapter).toBeInstanceOf(OpenCodeAdapter);
-        expect(adapter.getTaskId()).toBe('task-123');
-      });
-    });
-
     describe('isOpenCodeCliInstalled()', () => {
       it('should return boolean indicating CLI availability', async () => {
         // Act

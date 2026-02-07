@@ -81,19 +81,7 @@ vi.mock('electron', () => {
   };
 });
 
-// Mock opencode adapter
-vi.mock('@main/opencode/adapter', () => ({
-  isOpenCodeCliInstalled: vi.fn(() => Promise.resolve(true)),
-  getOpenCodeCliVersion: vi.fn(() => Promise.resolve('1.0.0')),
-}));
-
-// Mock OpenCode auth (ChatGPT OAuth)
-vi.mock('@main/opencode/auth', () => ({
-  getOpenAiOauthStatus: vi.fn(() => ({ connected: false })),
-  loginOpenAiWithChatGpt: vi.fn(() => Promise.resolve({ openedUrl: undefined })),
-}));
-
-// Mock task manager
+// Mock task manager instance (will be returned by getTaskManager)
 const mockTaskManager = {
   startTask: vi.fn(),
   cancelTask: vi.fn(),
@@ -104,14 +92,24 @@ const mockTaskManager = {
   getSessionId: vi.fn(() => null),
   isTaskQueued: vi.fn(() => false),
   cancelQueuedTask: vi.fn(),
+  dispose: vi.fn(),
 };
 
-vi.mock('@main/opencode/task-manager', () => ({
+// Mock @main/opencode - this is what handlers.ts imports from
+vi.mock('@main/opencode', () => ({
   getTaskManager: vi.fn(() => mockTaskManager),
   disposeTaskManager: vi.fn(),
+  isOpenCodeCliInstalled: vi.fn(() => Promise.resolve(true)),
+  getOpenCodeCliVersion: vi.fn(() => Promise.resolve('1.0.0')),
 }));
 
-// Mock task history
+// Mock OpenCode auth (ChatGPT OAuth) - used by handlers.ts for OpenAI OAuth
+vi.mock('@main/opencode/auth', () => ({
+  getOpenAiOauthStatus: vi.fn(() => ({ connected: false })),
+  loginOpenAiWithChatGpt: vi.fn(() => Promise.resolve({ openedUrl: undefined })),
+}));
+
+// Mock task history (stored in test state)
 const mockTasks: Array<{
   id: string;
   prompt: string;
@@ -120,7 +118,55 @@ const mockTasks: Array<{
   createdAt: string;
 }> = [];
 
-vi.mock('@main/store/taskHistory', () => ({
+// Mock app settings state
+let mockDebugMode = false;
+let mockOnboardingComplete = false;
+let mockSelectedModel: { provider: string; model: string } | null = null;
+let mockOpenAiBaseUrl = '';
+
+// Mock @accomplish_ai/agent-core - comprehensive mock covering all exports used by handlers.ts
+vi.mock('@accomplish_ai/agent-core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@accomplish_ai/agent-core')>();
+  return {
+    // Use actual implementation for API validation since tests stub fetch
+    validateApiKey: actual.validateApiKey,
+
+    // Use actual implementation for URL validation since tests depend on real validation
+    validateHttpUrl: actual.validateHttpUrl,
+
+    // Use actual implementation for task config validation
+    validateTaskConfig: actual.validateTaskConfig,
+
+    // Use actual implementation for allowed API key providers constant
+    ALLOWED_API_KEY_PROVIDERS: actual.ALLOWED_API_KEY_PROVIDERS,
+
+    // Use actual implementation for standard validation providers constant
+    STANDARD_VALIDATION_PROVIDERS: actual.STANDARD_VALIDATION_PROVIDERS,
+
+    // Use actual implementation for validation schemas and functions
+    validate: actual.validate,
+    permissionResponseSchema: actual.permissionResponseSchema,
+
+  // Utility functions
+  fetchWithTimeout: vi.fn(() => Promise.resolve(new Response('{}'))),
+  createTaskId: vi.fn(() => `task_${Date.now()}`),
+  createMessageId: vi.fn(() => `msg-${Date.now()}`),
+  sanitizeString: vi.fn((input: unknown, fieldName: string, maxLength = 255) => {
+    if (typeof input !== 'string') {
+      throw new Error(`${fieldName} must be a string`);
+    }
+    const trimmed = input.trim();
+    if (!trimmed) {
+      throw new Error(`${fieldName} is required`);
+    }
+    if (trimmed.length > maxLength) {
+      throw new Error(`${fieldName} exceeds maximum length of ${maxLength}`);
+    }
+    return trimmed;
+  }),
+  safeParseJson: vi.fn((s: string) => ({ success: true, data: JSON.parse(s) })),
+
+  // Task history functions
   getTasks: vi.fn(() => mockTasks),
   getTask: vi.fn((taskId: string) => mockTasks.find((t) => t.id === taskId)),
   saveTask: vi.fn((task: unknown) => {
@@ -143,7 +189,123 @@ vi.mock('@main/store/taskHistory', () => ({
   clearHistory: vi.fn(() => {
     mockTasks.length = 0;
   }),
-}));
+  saveTodosForTask: vi.fn(),
+  getTodosForTask: vi.fn(() => []),
+  clearTodosForTask: vi.fn(),
+
+  // App settings functions
+  getDebugMode: vi.fn(() => mockDebugMode),
+  setDebugMode: vi.fn((enabled: boolean) => {
+    mockDebugMode = enabled;
+  }),
+  getAppSettings: vi.fn(() => ({
+    debugMode: mockDebugMode,
+    onboardingComplete: mockOnboardingComplete,
+    selectedModel: mockSelectedModel,
+    openaiBaseUrl: mockOpenAiBaseUrl,
+  })),
+  getOnboardingComplete: vi.fn(() => mockOnboardingComplete),
+  setOnboardingComplete: vi.fn((complete: boolean) => {
+    mockOnboardingComplete = complete;
+  }),
+  getSelectedModel: vi.fn(() => mockSelectedModel),
+  setSelectedModel: vi.fn((model: { provider: string; model: string }) => {
+    mockSelectedModel = model;
+  }),
+  getOpenAiBaseUrl: vi.fn(() => mockOpenAiBaseUrl),
+  setOpenAiBaseUrl: vi.fn((baseUrl: string) => {
+    mockOpenAiBaseUrl = baseUrl;
+  }),
+  getOllamaConfig: vi.fn(() => null),
+  setOllamaConfig: vi.fn(),
+  getAzureFoundryConfig: vi.fn(() => null),
+  setAzureFoundryConfig: vi.fn(),
+  getLiteLLMConfig: vi.fn(() => null),
+  setLiteLLMConfig: vi.fn(),
+  getLMStudioConfig: vi.fn(() => null),
+  setLMStudioConfig: vi.fn(),
+
+  // Provider settings functions
+  getProviderSettings: vi.fn(() => ({
+    activeProviderId: 'anthropic',
+    connectedProviders: {
+      anthropic: {
+        providerId: 'anthropic',
+        connectionStatus: 'connected',
+        selectedModelId: 'claude-3-5-sonnet-20241022',
+        credentials: { type: 'api-key', apiKey: 'test-key' },
+      },
+    },
+    debugMode: false,
+  })),
+  setActiveProvider: vi.fn(),
+  getActiveProviderModel: vi.fn(() => ({
+    provider: 'anthropic',
+    model: 'claude-3-5-sonnet-20241022',
+  })),
+  getConnectedProvider: vi.fn(() => ({
+    providerId: 'anthropic',
+    connectionStatus: 'connected',
+    selectedModelId: 'claude-3-5-sonnet-20241022',
+    credentials: { type: 'api-key', apiKey: 'test-key' },
+  })),
+  setConnectedProvider: vi.fn(),
+  removeConnectedProvider: vi.fn(),
+  updateProviderModel: vi.fn(),
+  setProviderDebugMode: vi.fn(),
+  getProviderDebugMode: vi.fn(() => false),
+  hasReadyProvider: vi.fn(() => true),
+  getOpenAiOauthStatus: vi.fn(() => ({ connected: false })),
+
+  // Azure token function
+  getAzureEntraToken: vi.fn(() => Promise.resolve({ success: true, token: 'mock-token' })),
+
+  // Task summarization
+  generateTaskSummary: vi.fn(() => Promise.resolve('Mock task summary')),
+
+  // Message processing functions
+  toTaskMessage: vi.fn((message: unknown) => {
+    const msg = message as { type: string; part?: { text?: string; tool?: string } };
+    if (msg.type === 'text' && msg.part?.text) {
+      return {
+        id: `msg-${Date.now()}`,
+        type: 'assistant',
+        content: msg.part.text,
+        timestamp: new Date().toISOString(),
+      };
+    }
+    if (msg.type === 'tool_call') {
+      return {
+        id: `msg-${Date.now()}`,
+        type: 'tool',
+        content: `Using tool: ${msg.part?.tool}`,
+        toolName: msg.part?.tool,
+        timestamp: new Date().toISOString(),
+      };
+    }
+    return null;
+  }),
+  queueMessage: vi.fn(),
+  flushAndCleanupBatcher: vi.fn(),
+
+  // API validation functions
+  validateAnthropicApiKey: vi.fn(() => Promise.resolve({ valid: true })),
+  validateOpenAIApiKey: vi.fn(() => Promise.resolve({ valid: true })),
+  validateGoogleApiKey: vi.fn(() => Promise.resolve({ valid: true })),
+  validateXAIApiKey: vi.fn(() => Promise.resolve({ valid: true })),
+  validateBedrockCredentials: vi.fn(() => Promise.resolve({ valid: true })),
+  validateDeepSeekApiKey: vi.fn(() => Promise.resolve({ valid: true })),
+  validateOpenAICompatibleApiKey: vi.fn(() => Promise.resolve({ valid: true })),
+  validateOllamaConnection: vi.fn(() => Promise.resolve({ valid: true })),
+  validateLiteLLMConnection: vi.fn(() => Promise.resolve({ valid: true })),
+  validateLMStudioConnection: vi.fn(() => Promise.resolve({ valid: true })),
+  testLMStudioConnection: vi.fn(() => Promise.resolve({ success: true, models: [] })),
+  fetchLMStudioModels: vi.fn(() => Promise.resolve({ success: true, models: [] })),
+  validateLMStudioConfig: vi.fn(),
+  validateAzureFoundryConnection: vi.fn(() => Promise.resolve({ valid: true })),
+    validateMoonshotApiKey: vi.fn(() => Promise.resolve({ valid: true })),
+  };
+});
 
 // Mock secure storage
 let mockApiKeys: Record<string, string | null> = {};
@@ -163,11 +325,11 @@ vi.mock('@main/store/secureStorage', () => ({
   }),
   getAllApiKeys: vi.fn(() =>
     Promise.resolve({
-      anthropic: mockApiKeys['anthropic'] || null,
-      openai: mockApiKeys['openai'] || null,
-      google: mockApiKeys['google'] || null,
-      xai: mockApiKeys['xai'] || null,
-      custom: mockApiKeys['custom'] || null,
+      anthropic: mockApiKeys['anthropic'] ?? null,
+      openai: mockApiKeys['openai'] ?? null,
+      google: mockApiKeys['google'] ?? null,
+      xai: mockApiKeys['xai'] ?? null,
+      custom: mockApiKeys['custom'] ?? null,
     })
   ),
   hasAnyApiKey: vi.fn(() =>
@@ -176,75 +338,7 @@ vi.mock('@main/store/secureStorage', () => ({
   listStoredCredentials: vi.fn(() => mockStoredCredentials),
 }));
 
-// Mock app settings
-let mockDebugMode = false;
-let mockOnboardingComplete = false;
-let mockSelectedModel: { provider: string; model: string } | null = null;
-let mockOpenAiBaseUrl = '';
-
-vi.mock('@main/store/appSettings', () => ({
-  getDebugMode: vi.fn(() => mockDebugMode),
-  setDebugMode: vi.fn((enabled: boolean) => {
-    mockDebugMode = enabled;
-  }),
-  getAppSettings: vi.fn(() => ({
-    debugMode: mockDebugMode,
-    onboardingComplete: mockOnboardingComplete,
-    selectedModel: mockSelectedModel,
-    openaiBaseUrl: mockOpenAiBaseUrl,
-  })),
-  getOnboardingComplete: vi.fn(() => mockOnboardingComplete),
-  setOnboardingComplete: vi.fn((complete: boolean) => {
-    mockOnboardingComplete = complete;
-  }),
-  getSelectedModel: vi.fn(() => mockSelectedModel),
-  setSelectedModel: vi.fn((model: { provider: string; model: string }) => {
-    mockSelectedModel = model;
-  }),
-  getAzureFoundryConfig: vi.fn(() => null),
-  setAzureFoundryConfig: vi.fn(),
-  getOpenAiBaseUrl: vi.fn(() => mockOpenAiBaseUrl),
-  setOpenAiBaseUrl: vi.fn((baseUrl: string) => {
-    mockOpenAiBaseUrl = baseUrl;
-  }),
-}));
-
-// Mock provider settings
-vi.mock('@main/store/providerSettings', () => ({
-  getProviderSettings: vi.fn(() => ({
-    activeProviderId: 'anthropic',
-    connectedProviders: {
-      anthropic: {
-        providerId: 'anthropic',
-        connectionStatus: 'connected',
-        selectedModelId: 'claude-3-5-sonnet-20241022',
-        credentials: { type: 'api-key', apiKey: 'test-key' },
-      },
-    },
-    debugMode: false,
-  })),
-  saveProviderSettings: vi.fn(),
-  getActiveProvider: vi.fn(() => ({
-    providerId: 'anthropic',
-    connectionStatus: 'connected',
-    selectedModelId: 'claude-3-5-sonnet-20241022',
-    credentials: { type: 'api-key', apiKey: 'test-key' },
-  })),
-  setActiveProvider: vi.fn(),
-  getConnectedProvider: vi.fn(() => ({
-    providerId: 'anthropic',
-    connectionStatus: 'connected',
-    selectedModelId: 'claude-3-5-sonnet-20241022',
-    credentials: { type: 'api-key', apiKey: 'test-key' },
-  })),
-  saveConnectedProvider: vi.fn(),
-  removeConnectedProvider: vi.fn(),
-  getActiveProviderModel: vi.fn(() => ({ provider: 'anthropic', model: 'anthropic/claude-3-5-sonnet-20241022' })),
-  getConnectedProviderIds: vi.fn(() => ['anthropic']),
-  setProviderDebugMode: vi.fn(),
-  getProviderDebugMode: vi.fn(() => false),
-  hasReadyProvider: vi.fn(() => true),
-}));
+// Note: App settings and provider settings are now mocked via @accomplish/core mock above
 
 // Mock config
 vi.mock('@main/config', () => ({
@@ -489,7 +583,7 @@ describe('IPC Handlers Integration', () => {
       await invokeHandler('settings:set-debug-mode', true);
 
       // Assert
-      const { setDebugMode } = await import('@main/store/appSettings');
+      const { setDebugMode } = await import('@accomplish_ai/agent-core');
       expect(setDebugMode).toHaveBeenCalledWith(true);
     });
 
@@ -523,11 +617,12 @@ describe('IPC Handlers Integration', () => {
     });
 
     it('settings:api-keys should return list of stored API keys', async () => {
-      // Arrange
-      mockStoredCredentials = [
-        { account: 'apiKey:anthropic', password: 'sk-ant-12345678' },
-        { account: 'apiKey:openai', password: 'sk-openai-abcdefgh' },
-      ];
+      // Arrange - set the api keys directly via mockApiKeys
+      // Note: The handler now uses getAllApiKeys() which reads from mockApiKeys
+      mockApiKeys = {
+        anthropic: 'sk-ant-12345678',
+        openai: 'sk-openai-abcdefgh',
+      };
 
       // Act
       const result = await invokeHandler('settings:api-keys');
@@ -752,7 +847,7 @@ describe('IPC Handlers Integration', () => {
       await invokeHandler('task:delete', taskId);
 
       // Assert
-      const { deleteTask } = await import('@main/store/taskHistory');
+      const { deleteTask } = await import('@accomplish_ai/agent-core');
       expect(deleteTask).toHaveBeenCalledWith(taskId);
     });
 
@@ -779,7 +874,7 @@ describe('IPC Handlers Integration', () => {
       await invokeHandler('task:clear-history');
 
       // Assert
-      const { clearHistory } = await import('@main/store/taskHistory');
+      const { clearHistory } = await import('@accomplish_ai/agent-core');
       expect(clearHistory).toHaveBeenCalled();
     });
   });
@@ -837,7 +932,7 @@ describe('IPC Handlers Integration', () => {
       await invokeHandler('onboarding:set-complete', true);
 
       // Assert
-      const { setOnboardingComplete } = await import('@main/store/appSettings');
+      const { setOnboardingComplete } = await import('@accomplish_ai/agent-core');
       expect(setOnboardingComplete).toHaveBeenCalledWith(true);
     });
   });
@@ -968,7 +1063,7 @@ describe('IPC Handlers Integration', () => {
       await invokeHandler('model:set', newModel);
 
       // Assert
-      const { setSelectedModel } = await import('@main/store/appSettings');
+      const { setSelectedModel } = await import('@accomplish_ai/agent-core');
       expect(setSelectedModel).toHaveBeenCalledWith(newModel);
     });
 
@@ -1016,10 +1111,10 @@ describe('IPC Handlers Integration', () => {
     it('shell:open-external should reject non-http/https protocols', async () => {
       // Arrange & Act & Assert
       await expect(invokeHandler('shell:open-external', 'file:///etc/passwd')).rejects.toThrow(
-        'Only http and https URLs are allowed'
+        'must use http or https protocol'
       );
       await expect(invokeHandler('shell:open-external', 'javascript:alert(1)')).rejects.toThrow(
-        'Only http and https URLs are allowed'
+        'must use http or https protocol'
       );
     });
 
@@ -1307,7 +1402,7 @@ describe('IPC Handlers Integration', () => {
       await invokeHandler('task:start', config);
 
       // Assert
-      const { saveTask } = await import('@main/store/taskHistory');
+      const { saveTask } = await import('@accomplish_ai/agent-core');
       expect(saveTask).toHaveBeenCalled();
     });
 
@@ -1431,7 +1526,7 @@ describe('IPC Handlers Integration', () => {
       await invokeHandler('session:resume', sessionId, prompt, existingTaskId);
 
       // Assert
-      const { addTaskMessage } = await import('@main/store/taskHistory');
+      const { addTaskMessage } = await import('@accomplish_ai/agent-core');
       expect(addTaskMessage).toHaveBeenCalledWith(
         existingTaskId,
         expect.objectContaining({
@@ -1459,7 +1554,7 @@ describe('IPC Handlers Integration', () => {
       await invokeHandler('session:resume', sessionId, prompt, existingTaskId);
 
       // Assert
-      const { updateTaskStatus } = await import('@main/store/taskHistory');
+      const { updateTaskStatus } = await import('@accomplish_ai/agent-core');
       expect(updateTaskStatus).toHaveBeenCalledWith(
         existingTaskId,
         'running',
@@ -1484,7 +1579,7 @@ describe('IPC Handlers Integration', () => {
       await invokeHandler('session:resume', sessionId, prompt);
 
       // Assert
-      const { addTaskMessage } = await import('@main/store/taskHistory');
+      const { addTaskMessage } = await import('@accomplish_ai/agent-core');
       // Should not be called for new tasks
       expect(addTaskMessage).not.toHaveBeenCalledWith(
         undefined,
@@ -1940,10 +2035,11 @@ describe('IPC Handlers Integration', () => {
     });
 
     it('settings:api-keys should handle empty password', async () => {
-      // Arrange
-      mockStoredCredentials = [
-        { account: 'apiKey:anthropic', password: '' },
-      ];
+      // Arrange - use mockApiKeys directly
+      // Note: The handler now uses getAllApiKeys() which reads from mockApiKeys
+      mockApiKeys = {
+        anthropic: '',  // Empty key value
+      };
 
       // Act
       const result = await invokeHandler('settings:api-keys') as Array<{ keyPrefix: string }>;

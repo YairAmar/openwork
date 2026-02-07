@@ -12,8 +12,8 @@ export default defineConfig({
       '@': path.resolve(__dirname, 'src/renderer'),
       '@main': path.resolve(__dirname, 'src/main'),
       '@renderer': path.resolve(__dirname, 'src/renderer'),
-      '@shared': path.resolve(__dirname, '../../packages/shared/src'),
-      '@accomplish/shared': path.resolve(__dirname, '../../packages/shared/src'),
+      '@accomplish_ai/agent-core/common': path.resolve(__dirname, '../../packages/agent-core/src/common'),
+      '@accomplish_ai/agent-core': path.resolve(__dirname, '../../packages/agent-core/src'),
     },
   },
   test: {
@@ -27,6 +27,7 @@ export default defineConfig({
     environmentMatchGlobs: [
       ['__tests__/**/*.renderer.*.test.{ts,tsx}', 'jsdom'],
       ['__tests__/**/renderer/**/*.test.{ts,tsx}', 'jsdom'],
+      ['__tests__/**/renderer/**/*.unit.test.{ts,tsx}', 'jsdom'],
     ],
     testTimeout: 5000,
     hookTimeout: 10000,

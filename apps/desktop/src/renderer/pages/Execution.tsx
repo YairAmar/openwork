@@ -7,8 +7,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useTaskStore } from '../stores/taskStore';
 import { getAccomplish } from '../lib/accomplish';
 import { springs } from '../lib/animations';
-import type { TaskMessage } from '@accomplish/shared';
-import { hasAnyReadyProvider } from '@accomplish/shared';
+import type { TaskMessage } from '@accomplish_ai/agent-core/common';
+import { hasAnyReadyProvider } from '@accomplish_ai/agent-core/common';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
@@ -24,8 +24,10 @@ import { BrowserScriptCard } from '../components/BrowserScriptCard';
 import loadingSymbol from '/assets/loading-symbol.svg';
 import SettingsDialog from '../components/layout/SettingsDialog';
 import { TodoSidebar } from '../components/TodoSidebar';
+import { ModelIndicator } from '../components/ui/ModelIndicator';
 import { useSpeechInput } from '../hooks/useSpeechInput';
 import { SpeechInputButton } from '../components/ui/SpeechInputButton';
+import { PlusMenu } from '../components/landing/PlusMenu';
 
 // Debug log entry type
 interface DebugLogEntry {
@@ -36,7 +38,7 @@ interface DebugLogEntry {
   data?: unknown;
 }
 
-// Spinning Openwork icon component
+// Spinning Accomplish icon component
 const SpinningIcon = ({ className }: { className?: string }) => (
   <img
     src={loadingSymbol}
@@ -44,6 +46,15 @@ const SpinningIcon = ({ className }: { className?: string }) => (
     className={cn('animate-spin-ccw', className)}
   />
 );
+
+// Action-oriented thinking phrases
+const THINKING_PHRASES = [
+  'Doing...',
+  'Executing...',
+  'Running...',
+  'Handling it...',
+  'Accomplishing...',
+];
 
 // Tool name to icon mapping
 const TOOL_ICON_MAP: Record<string, typeof FileText> = {
@@ -92,6 +103,7 @@ const TOOL_ICON_MAP: Record<string, typeof FileText> = {
   complete_task: CheckCircle,
   report_thought: Lightbulb,
   report_checkpoint: Flag,
+  start_task: Play,
 };
 
 // Extract base tool name from MCP-prefixed tool names
@@ -173,7 +185,7 @@ export default function ExecutionPage() {
   const { t: tCommon } = useTranslation('common');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [followUp, setFollowUp] = useState('');
-  const followUpInputRef = useRef<HTMLInputElement>(null);
+  const followUpInputRef = useRef<HTMLTextAreaElement>(null);
   const [taskRunCount, setTaskRunCount] = useState(0);
   const [currentTool, setCurrentTool] = useState<string | null>(null);
   const [currentToolInput, setCurrentToolInput] = useState<unknown>(null);
@@ -181,11 +193,15 @@ export default function ExecutionPage() {
   const [debugPanelOpen, setDebugPanelOpen] = useState(false);
   const [debugModeEnabled, setDebugModeEnabled] = useState(false);
   const [debugExported, setDebugExported] = useState(false);
+  const [debugSearchQuery, setDebugSearchQuery] = useState('');
+  const [debugSearchIndex, setDebugSearchIndex] = useState(0); // Current focused match index
   const debugPanelRef = useRef<HTMLDivElement>(null);
+  const debugSearchInputRef = useRef<HTMLInputElement>(null);
+  const debugLogRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const [selectedOptions, setSelectedOptions] = useState<string[]>([]);
   const [customResponse, setCustomResponse] = useState('');
   const [showSettingsDialog, setShowSettingsDialog] = useState(false);
-  const [settingsInitialTab, setSettingsInitialTab] = useState<'providers' | 'voice'>('providers');
+  const [settingsInitialTab, setSettingsInitialTab] = useState<'providers' | 'voice' | 'skills'>('providers');
   const [pendingFollowUp, setPendingFollowUp] = useState<string | null>(null);
   const pendingSpeechFollowUpRef = useRef<string | null>(null);
 
@@ -214,6 +230,7 @@ export default function ExecutionPage() {
     setupDownloadStep,
     startupStage,
     startupStageTaskId,
+    clearStartupStage,
     todos,
     todosTaskId,
   } = useTaskStore();
@@ -235,6 +252,60 @@ export default function ExecutionPage() {
       console.error('[Speech] Error:', error.message);
     },
   });
+
+  // Filter debug logs based on search query
+  const filteredDebugLogs = useMemo(() => {
+    if (!debugSearchQuery.trim()) return debugLogs;
+    const query = debugSearchQuery.toLowerCase();
+    return debugLogs.filter(log =>
+      log.message.toLowerCase().includes(query) ||
+      log.type.toLowerCase().includes(query) ||
+      (log.data !== undefined &&
+        (typeof log.data === 'string' ? log.data : JSON.stringify(log.data))
+          .toLowerCase().includes(query))
+    );
+  }, [debugLogs, debugSearchQuery]);
+
+  // Pick a random thinking phrase when entering thinking state (currentTool becomes null)
+  const thinkingPhrase = useMemo(() => {
+    return THINKING_PHRASES[Math.floor(Math.random() * THINKING_PHRASES.length)];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentTool]);
+
+  // Reset search index when query changes
+  useEffect(() => {
+    setDebugSearchIndex(0);
+  }, [debugSearchQuery]);
+
+  // Navigate to next/previous match
+  const goToNextMatch = useCallback(() => {
+    if (filteredDebugLogs.length === 0) return;
+    const nextIndex = (debugSearchIndex + 1) % filteredDebugLogs.length;
+    setDebugSearchIndex(nextIndex);
+    // Scroll the row into view
+    const rowEl = debugLogRefs.current.get(nextIndex);
+    rowEl?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [filteredDebugLogs.length, debugSearchIndex]);
+
+  const goToPrevMatch = useCallback(() => {
+    if (filteredDebugLogs.length === 0) return;
+    const prevIndex = (debugSearchIndex - 1 + filteredDebugLogs.length) % filteredDebugLogs.length;
+    setDebugSearchIndex(prevIndex);
+    // Scroll the row into view
+    const rowEl = debugLogRefs.current.get(prevIndex);
+    rowEl?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [filteredDebugLogs.length, debugSearchIndex]);
+
+  // Highlight matching text in debug logs
+  const highlightText = useCallback((text: string, query: string) => {
+    if (!query.trim()) return text;
+    const parts = text.split(new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi'));
+    return parts.map((part, i) =>
+      part.toLowerCase() === query.toLowerCase() ? (
+        <mark key={i} className="bg-yellow-500/40 text-yellow-200 rounded px-0.5">{part}</mark>
+      ) : part
+    );
+  }, []);
 
   // Debounced scroll function
   const scrollToBottom = useMemo(
@@ -296,39 +367,63 @@ export default function ExecutionPage() {
   useEffect(() => {
     if (id) {
       loadTaskById(id);
-      // Clear debug logs when switching tasks
+      // Clear debug logs and search when switching tasks
       setDebugLogs([]);
+      setDebugSearchQuery('');
+      // Reset tool state to prevent stale state when switching tasks (fixes UI leaking)
+      setCurrentTool(null);
+      setCurrentToolInput(null);
+
+      // Fetch todos for this task from database (always set, even if empty, to clear stale todos)
+      accomplish.getTodosForTask(id).then((todos) => {
+        useTaskStore.getState().setTodos(id, todos);
+      });
     }
 
     // Handle individual task updates
     const unsubscribeTask = accomplish.onTaskUpdate((event) => {
       addTaskUpdate(event);
-      // Track current tool from tool messages
-      if (event.type === 'message' && event.message?.type === 'tool') {
+      // Track current tool from tool messages (only for current task to prevent UI leaking)
+      if (event.taskId === id && event.type === 'message' && event.message?.type === 'tool') {
         const toolName = event.message.toolName || event.message.content?.match(/Using tool: (\w+)/)?.[1];
         if (toolName) {
           setCurrentTool(toolName);
           setCurrentToolInput(event.message.toolInput);
         }
       }
-      // Clear tool on completion
-      if (event.type === 'complete' || event.type === 'error') {
+      // Clear tool and startup stage when agent sends a text response (only for current task)
+      if (event.taskId === id && event.type === 'message' && event.message?.type === 'assistant') {
+        setCurrentTool(null);
+        setCurrentToolInput(null);
+        if (id) clearStartupStage(id);
+      }
+      // Clear tool on completion (only for current task)
+      if (event.taskId === id && (event.type === 'complete' || event.type === 'error')) {
         setCurrentTool(null);
         setCurrentToolInput(null);
       }
     });
 
     // Handle batched task updates (for performance)
+    // Only update local UI state for current task to prevent UI leaking between parallel tasks
     const unsubscribeTaskBatch = accomplish.onTaskUpdateBatch?.((event) => {
       if (event.messages?.length) {
         addTaskUpdateBatch(event);
-        // Track current tool from the last tool message
-        const lastToolMsg = [...event.messages].reverse().find(m => m.type === 'tool');
-        if (lastToolMsg) {
-          const toolName = lastToolMsg.toolName || lastToolMsg.content?.match(/Using tool: (\w+)/)?.[1];
-          if (toolName) {
-            setCurrentTool(toolName);
-            setCurrentToolInput(lastToolMsg.toolInput);
+        // Track current tool from the last message (only for current task)
+        if (event.taskId === id) {
+          const lastMsg = event.messages[event.messages.length - 1];
+          if (lastMsg.type === 'assistant') {
+            // Agent sent a text response - no tool is active
+            setCurrentTool(null);
+            setCurrentToolInput(null);
+            if (id) clearStartupStage(id);
+          } else if (lastMsg.type === 'tool') {
+            // Tool is active
+            const toolName = lastMsg.toolName || lastMsg.content?.match(/Using tool: (\w+)/)?.[1];
+            if (toolName) {
+              setCurrentTool(toolName);
+              setCurrentToolInput(lastMsg.toolInput);
+            }
           }
         }
       }
@@ -383,6 +478,18 @@ export default function ExecutionPage() {
       debugPanelRef.current.scrollTop = debugPanelRef.current.scrollHeight;
     }
   }, [debugLogs.length, debugPanelOpen]);
+
+  // CMD+F to focus debug search when panel is open
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'f' && debugPanelOpen && debugModeEnabled) {
+        e.preventDefault();
+        debugSearchInputRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [debugPanelOpen, debugModeEnabled]);
 
   // Auto-focus follow-up input when task completes
   const isComplete = ['completed', 'failed', 'cancelled', 'interrupted'].includes(currentTask?.status ?? '');
@@ -453,6 +560,11 @@ export default function ExecutionPage() {
 
   const handleOpenSpeechSettings = useCallback(() => {
     setSettingsInitialTab('voice');
+    setShowSettingsDialog(true);
+  }, []);
+
+  const handleOpenModelSettings = useCallback(() => {
+    setSettingsInitialTab('providers');
     setShowSettingsDialog(true);
   }, []);
 
@@ -828,10 +940,15 @@ export default function ExecutionPage() {
                             })())
                           : (startupStageTaskId === id && startupStage)
                             ? startupStage.message
-                            : t('thinking')}
+                            : thinkingPhrase}
                       </span>
-                      {/* Elapsed time - only show during startup stages */}
-                      {!currentTool && startupStageTaskId === id && startupStage && (
+                      {currentTool && !(currentToolInput as { description?: string })?.description && (
+                        <span className="text-xs text-muted-foreground/60">
+                          ({currentTool})
+                        </span>
+                      )}
+                      {/* Elapsed time - only show during startup stages when valid */}
+                      {!currentTool && startupStageTaskId === id && startupStage && elapsedTime > 0 && (
                         <span className="text-xs text-muted-foreground/60">
                           ({elapsedTime}s)
                         </span>
@@ -899,8 +1016,9 @@ export default function ExecutionPage() {
               exit={{ opacity: 0, scale: 0.95, y: 10 }}
               transition={springs.bouncy}
             >
-              <Card className="w-full max-w-lg p-6 mx-4 max-h-[80vh] flex flex-col">
-                <div className="flex items-start gap-4 min-h-0 flex-1 overflow-hidden">
+              <Card className="w-full max-w-lg mx-4 max-h-[80vh] flex flex-col overflow-hidden">
+                {/* Header - always visible */}
+                <div className="flex items-start gap-4 p-6 pb-4 shrink-0">
                   <div className={cn(
                     "flex h-10 w-10 items-center justify-center rounded-full shrink-0",
                     isDeleteOperation(permissionRequest) ? "bg-red-500/10" :
@@ -917,20 +1035,22 @@ export default function ExecutionPage() {
                       <AlertCircle className="h-5 w-5 text-warning" />
                     )}
                   </div>
-                  <div className="flex-1 min-w-0 overflow-y-auto">
-                    <h3 className={cn(
-                      "text-lg font-semibold mb-2",
-                      isDeleteOperation(permissionRequest) ? "text-red-600" : "text-foreground"
-                    )}>
-                      {isDeleteOperation(permissionRequest)
-                        ? t('permission.fileDeleteTitle')
-                        : permissionRequest.type === 'file'
-                          ? t('permission.fileTitle')
-                          : permissionRequest.type === 'question'
-                            ? (permissionRequest.header || t('permission.questionTitle'))
-                            : t('permission.title')}
-                    </h3>
+                  <h3 className={cn(
+                    "text-lg font-semibold",
+                    isDeleteOperation(permissionRequest) ? "text-red-600" : "text-foreground"
+                  )}>
+                    {isDeleteOperation(permissionRequest)
+                      ? t('permission.fileDeleteTitle')
+                      : permissionRequest.type === 'file'
+                        ? t('permission.fileTitle')
+                        : permissionRequest.type === 'question'
+                          ? (permissionRequest.header || t('permission.questionTitle'))
+                          : t('permission.title')}
+                  </h3>
+                </div>
 
+                {/* Scrollable content area */}
+                <div className="flex-1 overflow-y-auto px-6 min-h-0">
                     {/* File permission specific UI */}
                     {permissionRequest.type === 'file' && (
                       <>
@@ -1119,38 +1239,39 @@ export default function ExecutionPage() {
                       </>
                     )}
 
-                    <div className="flex gap-3">
-                      <Button
-                        variant="outline"
-                        onClick={() => handlePermissionResponse(false)}
-                        className="flex-1"
-                        data-testid="permission-deny-button"
-                      >
-                        {permissionRequest.type === 'question' ? tCommon('buttons.cancel') : tCommon('buttons.deny')}
-                      </Button>
-                      <Button
-                        onClick={() => handlePermissionResponse(true)}
-                        className={cn(
-                          "flex-1",
-                          isDeleteOperation(permissionRequest) && "bg-red-600 hover:bg-red-700 text-white"
-                        )}
-                        data-testid="permission-allow-button"
-                        disabled={
-                          permissionRequest.type === 'question' &&
-                          selectedOptions.length === 0 &&
-                          !customResponse.trim()
-                        }
-                      >
-                        {isDeleteOperation(permissionRequest)
-                          ? getDisplayFilePaths(permissionRequest).length > 1
-                            ? tCommon('buttons.deleteAll')
-                            : tCommon('buttons.delete')
-                          : permissionRequest.type === 'question'
-                            ? tCommon('buttons.submit')
-                            : tCommon('buttons.allow')}
-                      </Button>
-                    </div>
-                  </div>
+                </div>
+
+                {/* Footer with buttons - always visible */}
+                <div className="flex gap-3 p-6 pt-4 shrink-0 border-t border-border">
+                  <Button
+                    variant="outline"
+                    onClick={() => handlePermissionResponse(false)}
+                    className="flex-1"
+                    data-testid="permission-deny-button"
+                  >
+                    {permissionRequest.type === 'question' ? tCommon('buttons.cancel') : tCommon('buttons.deny')}
+                  </Button>
+                  <Button
+                    onClick={() => handlePermissionResponse(true)}
+                    className={cn(
+                      "flex-1",
+                      isDeleteOperation(permissionRequest) && "bg-red-600 hover:bg-red-700 text-white"
+                    )}
+                    data-testid="permission-allow-button"
+                    disabled={
+                      permissionRequest.type === 'question' &&
+                      selectedOptions.length === 0 &&
+                      !customResponse.trim()
+                    }
+                  >
+                    {isDeleteOperation(permissionRequest)
+                      ? getDisplayFilePaths(permissionRequest).length > 1
+                        ? tCommon('buttons.deleteAll')
+                        : tCommon('buttons.delete')
+                      : permissionRequest.type === 'question'
+                        ? tCommon('buttons.submit')
+                        : tCommon('buttons.allow')}
+                  </Button>
                 </div>
               </Card>
             </motion.div>
@@ -1161,22 +1282,28 @@ export default function ExecutionPage() {
 {/* Running state input with Stop button */}
       {currentTask.status === 'running' && !permissionRequest && (
         <div className="flex-shrink-0 border-t border-border bg-card/50 px-6 py-4">
-          <div className="max-w-4xl mx-auto flex gap-3">
-            <Input
-              placeholder={t('agentWorking')}
-              disabled
-              className="flex-1 opacity-50"
-            />
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={interruptTask}
-              title={t('stopAgent')}
-              className="shrink-0 hover:bg-destructive/10 hover:text-destructive hover:border-destructive"
-              data-testid="execution-stop-button"
-            >
-              <Square className="h-4 w-4 fill-current" />
-            </Button>
+          <div className="max-w-4xl mx-auto">
+            {/* All elements inside one bordered container */}
+            <div className="flex items-center gap-2 rounded-xl border border-border bg-background px-3 py-2.5">
+              <input
+                placeholder={t('agentWorking')}
+                disabled
+                className="flex-1 bg-transparent text-sm text-muted-foreground placeholder:text-muted-foreground focus:outline-none disabled:cursor-not-allowed"
+              />
+              <ModelIndicator
+                isRunning={true}
+                onOpenSettings={handleOpenModelSettings}
+              />
+              <div className="w-px h-6 bg-border flex-shrink-0" />
+              <button
+                onClick={interruptTask}
+                title={t('stopAgent')}
+                className="flex h-9 w-9 items-center justify-center rounded-lg bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors"
+                data-testid="execution-stop-button"
+              >
+                <Square className="h-4 w-4 fill-current" />
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1184,11 +1311,11 @@ export default function ExecutionPage() {
       {/* Follow-up input */}
       {canFollowUp && (
         <div className="flex-shrink-0 border-t border-border bg-card/50 px-6 py-4">
-          <div className="max-w-4xl mx-auto">
+          <div className="max-w-4xl mx-auto space-y-2">
             {speechInput.error && (
               <Alert
                 variant="destructive"
-                className="mb-2 py-2 px-3 flex items-center gap-2 [&>svg]:static [&>svg~*]:pl-0"
+                className="py-2 px-3 flex items-center gap-2 [&>svg]:static [&>svg~*]:pl-0"
               >
                 <AlertCircle className="h-4 w-4" />
                 <AlertDescription className="text-xs leading-tight">
@@ -1205,52 +1332,87 @@ export default function ExecutionPage() {
                 </AlertDescription>
               </Alert>
             )}
-            {/* Input field with Send button */}
-            <div className="flex gap-3">
-              <Input
-                ref={followUpInputRef}
-                value={followUp}
-                onChange={(e) => setFollowUp(e.target.value)}
-                onKeyDown={(e) => {
-                  // Ignore Enter during IME composition (Chinese/Japanese input)
-                  if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    handleFollowUp();
+            {/* Two-row layout: textarea top, toolbar bottom */}
+            <div className="rounded-xl border border-border bg-background shadow-sm transition-all duration-200 focus-within:border-ring focus-within:ring-1 focus-within:ring-ring">
+              {/* Textarea area */}
+              <div className="px-4 pt-3 pb-2">
+                <textarea
+                  ref={followUpInputRef}
+                  value={followUp}
+                  onChange={(e) => {
+                    setFollowUp(e.target.value);
+                    // Auto-resize
+                    e.target.style.height = 'auto';
+                    e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
+                  }}
+                  onKeyDown={(e) => {
+                    // Ignore Enter during IME composition (Chinese/Japanese input)
+                    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleFollowUp();
+                    }
+                  }}
+                  placeholder={
+                    currentTask.status === 'interrupted'
+                      ? (hasSession ? t('followUp.interruptedPlaceholder') : t('followUp.noSessionPlaceholder'))
+                      : currentTask.status === 'completed'
+                        ? t('followUp.completedPlaceholder')
+                        : t('followUp.defaultPlaceholder')
                   }
-                }}
-                placeholder={
-                  currentTask.status === 'interrupted'
-                    ? (hasSession ? t('followUp.interruptedPlaceholder') : t('followUp.noSessionPlaceholder'))
-                    : currentTask.status === 'completed'
-                      ? t('followUp.completedPlaceholder')
-                      : t('followUp.defaultPlaceholder')
-                }
-                disabled={isLoading || speechInput.isRecording}
-                className="flex-1"
-                data-testid="execution-follow-up-input"
-              />
-              <SpeechInputButton
-                isRecording={speechInput.isRecording}
-                isTranscribing={speechInput.isTranscribing}
-                recordingDuration={speechInput.recordingDuration}
-                error={speechInput.error}
-                isConfigured={speechInput.isConfigured}
-                disabled={isLoading}
-                onStartRecording={() => speechInput.startRecording()}
-                onStopRecording={() => speechInput.stopRecording()}
-                onRetry={() => speechInput.retry()}
-                onOpenSettings={handleOpenSpeechSettings}
-                size="md"
-              />
-              <Button
-                onClick={handleFollowUp}
-                disabled={!followUp.trim() || isLoading || speechInput.isRecording}
-                variant="outline"
-              >
-                <CornerDownLeft className="h-4 w-4 mr-1.5" />
-                {tCommon('buttons.send')}
-              </Button>
+                  disabled={isLoading || speechInput.isRecording}
+                  rows={1}
+                  className="w-full max-h-[160px] resize-none bg-transparent text-[15px] leading-relaxed text-foreground placeholder:text-muted-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                  data-testid="execution-follow-up-input"
+                />
+              </div>
+              {/* Toolbar - fixed at bottom */}
+              <div className="flex items-center justify-between gap-2 px-3 py-2 border-t border-border/50">
+                {/* Plus Menu on left */}
+                <PlusMenu
+                  onSkillSelect={(command) => {
+                    const newValue = `${command} ${followUp}`.trim();
+                    setFollowUp(newValue);
+                    setTimeout(() => followUpInputRef.current?.focus(), 0);
+                  }}
+                  onOpenSettings={(tab) => {
+                    setSettingsInitialTab(tab);
+                    setShowSettingsDialog(true);
+                  }}
+                  disabled={isLoading || speechInput.isRecording}
+                />
+
+                {/* Right side controls */}
+                <div className="flex items-center gap-2">
+                <ModelIndicator
+                  isRunning={false}
+                  onOpenSettings={handleOpenModelSettings}
+                />
+                <div className="w-px h-6 bg-border flex-shrink-0" />
+                <SpeechInputButton
+                  isRecording={speechInput.isRecording}
+                  isTranscribing={speechInput.isTranscribing}
+                  recordingDuration={speechInput.recordingDuration}
+                  error={speechInput.error}
+                  isConfigured={speechInput.isConfigured}
+                  disabled={isLoading}
+                  onStartRecording={() => speechInput.startRecording()}
+                  onStopRecording={() => speechInput.stopRecording()}
+                  onRetry={() => speechInput.retry()}
+                  onOpenSettings={handleOpenSpeechSettings}
+                  size="md"
+                />
+                <button
+                  type="button"
+                  onClick={handleFollowUp}
+                  disabled={!followUp.trim() || isLoading || speechInput.isRecording}
+                  className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  title={tCommon('buttons.send')}
+                >
+                  <CornerDownLeft className="h-4 w-4" />
+                </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -1289,7 +1451,9 @@ export default function ExecutionPage() {
               <span className="font-medium">{t('debug.title')}</span>
               {debugLogs.length > 0 && (
                 <span className="px-1.5 py-0.5 rounded-full bg-zinc-700 text-zinc-300 text-xs">
-                  {debugLogs.length}
+                  {debugSearchQuery.trim() && filteredDebugLogs.length !== debugLogs.length
+                    ? `${filteredDebugLogs.length} of ${debugLogs.length}`
+                    : debugLogs.length}
                 </span>
               )}
             </div>
@@ -1344,42 +1508,112 @@ export default function ExecutionPage() {
                 transition={{ duration: 0.2 }}
                 className="overflow-hidden"
               >
-                <div
-                  ref={debugPanelRef}
-                  className="h-[200px] overflow-y-auto bg-zinc-950 text-zinc-300 font-mono text-xs p-4"
-                >
-                  {debugLogs.length === 0 ? (
-                    <div className="flex items-center justify-center h-full text-zinc-500">
-                      {t('debug.noLogs')}
+                <div className="h-[200px] flex flex-col bg-zinc-950">
+                  {/* Sticky search input - top right */}
+                  <div className="flex items-center justify-end gap-2 p-2 border-b border-zinc-800 shrink-0">
+                    {/* Match counter */}
+                    {debugSearchQuery.trim() && filteredDebugLogs.length > 0 && (
+                      <span className="text-xs text-zinc-500">
+                        {debugSearchIndex + 1} of {filteredDebugLogs.length}
+                      </span>
+                    )}
+                    {/* Navigation arrows */}
+                    {debugSearchQuery.trim() && filteredDebugLogs.length > 0 && (
+                      <div className="flex">
+                        <button
+                          onClick={goToPrevMatch}
+                          className="p-1 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700 rounded-l border border-zinc-700 border-r-0"
+                          title="Previous match (Shift+Enter)"
+                        >
+                          <ChevronUp className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          onClick={goToNextMatch}
+                          className="p-1 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700 rounded-r border border-zinc-700"
+                          title="Next match (Enter)"
+                        >
+                          <ChevronDown className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    )}
+                    <div className="relative">
+                      <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-zinc-500" />
+                      <input
+                        ref={debugSearchInputRef}
+                        type="text"
+                        value={debugSearchQuery}
+                        onChange={(e) => setDebugSearchQuery(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && debugSearchQuery.trim()) {
+                            e.preventDefault();
+                            if (e.shiftKey) {
+                              goToPrevMatch();
+                            } else {
+                              goToNextMatch();
+                            }
+                          }
+                        }}
+                        placeholder={t('debug.searchPlaceholder')}
+                        className="h-7 w-52 pl-7 pr-2 text-xs bg-zinc-800 border border-zinc-700 rounded text-zinc-300 placeholder:text-zinc-500 focus:outline-none focus:border-zinc-500"
+                        data-testid="debug-search-input"
+                      />
                     </div>
-                  ) : (
-                    <div className="space-y-1">
-                      {debugLogs.map((log, index) => (
-                        <div key={index} className="flex gap-2">
-                          <span className="text-zinc-500 shrink-0">
-                            {new Date(log.timestamp).toLocaleTimeString()}
-                          </span>
-                          <span className={cn(
-                            'shrink-0 px-1 rounded',
-                            log.type === 'error' ? 'bg-red-500/20 text-red-400' :
-                            log.type === 'warn' ? 'bg-yellow-500/20 text-yellow-400' :
-                            log.type === 'info' ? 'bg-blue-500/20 text-blue-400' :
-                            'bg-zinc-700 text-zinc-400'
-                          )}>
-                            [{log.type}]
-                          </span>
-                          <span className="text-zinc-300 break-all">
-                            {log.message}
-                            {log.data !== undefined && (
-                              <span className="text-zinc-500 ml-2">
-                                {typeof log.data === 'string' ? log.data : JSON.stringify(log.data, null, 0)}
-                              </span>
+                  </div>
+                  {/* Scrollable logs area */}
+                  <div
+                    ref={debugPanelRef}
+                    className="flex-1 overflow-y-auto text-zinc-300 font-mono text-xs p-4"
+                  >
+                    {debugLogs.length === 0 ? (
+                      <div className="flex items-center justify-center h-full text-zinc-500">
+                        {t('debug.noLogs')}
+                      </div>
+                    ) : filteredDebugLogs.length === 0 ? (
+                      <div className="flex items-center justify-center h-full text-zinc-500">
+                        {t('debug.noMatchingLogs')}
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        {filteredDebugLogs.map((log, index) => (
+                          <div
+                            key={index}
+                            ref={(el) => {
+                              if (el) debugLogRefs.current.set(index, el);
+                              else debugLogRefs.current.delete(index);
+                            }}
+                            className={cn(
+                              'flex gap-2 px-1 -mx-1 rounded',
+                              debugSearchQuery.trim() && index === debugSearchIndex && 'bg-zinc-800/80 ring-1 ring-zinc-600'
                             )}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                          >
+                            <span className="text-zinc-500 shrink-0">
+                              {new Date(log.timestamp).toLocaleTimeString()}
+                            </span>
+                            <span className={cn(
+                              'shrink-0 px-1 rounded',
+                              log.type === 'error' ? 'bg-red-500/20 text-red-400' :
+                              log.type === 'warn' ? 'bg-yellow-500/20 text-yellow-400' :
+                              log.type === 'info' ? 'bg-blue-500/20 text-blue-400' :
+                              'bg-zinc-700 text-zinc-400'
+                            )}>
+                              [{highlightText(log.type, debugSearchQuery)}]
+                            </span>
+                            <span className="text-zinc-300 break-all">
+                              {highlightText(log.message, debugSearchQuery)}
+                              {log.data !== undefined && (
+                                <span className="text-zinc-500 ml-2">
+                                  {highlightText(
+                                    typeof log.data === 'string' ? log.data : JSON.stringify(log.data, null, 0),
+                                    debugSearchQuery
+                                  )}
+                                </span>
+                              )}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </motion.div>
             )}

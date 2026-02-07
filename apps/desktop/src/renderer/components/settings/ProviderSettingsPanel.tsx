@@ -2,8 +2,8 @@
 
 import { useTranslation } from 'react-i18next';
 import { AnimatePresence, motion } from 'framer-motion';
-import type { ProviderId, ConnectedProvider } from '@accomplish/shared';
-import { PROVIDER_META } from '@accomplish/shared';
+import type { ProviderId, ConnectedProvider } from '@accomplish_ai/agent-core/common';
+import { PROVIDER_META } from '@accomplish_ai/agent-core/common';
 import {
   ClassicProviderForm,
   BedrockProviderForm,

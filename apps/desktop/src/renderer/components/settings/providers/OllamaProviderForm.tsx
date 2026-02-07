@@ -1,19 +1,17 @@
-// apps/desktop/src/renderer/components/settings/providers/OllamaProviderForm.tsx
-
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AnimatePresence, motion } from 'framer-motion';
 import { getAccomplish } from '@/lib/accomplish';
 import { settingsVariants, settingsTransitions } from '@/lib/animations';
-import type { ConnectedProvider, OllamaCredentials, ToolSupportStatus } from '@accomplish/shared';
+import type { ConnectedProvider, OllamaCredentials, ToolSupportStatus } from '@accomplish_ai/agent-core/common';
 import {
   ConnectButton,
   ConnectedControls,
   ProviderFormHeader,
   FormError,
+  ModelSelector,
 } from '../shared';
 
-// Import Ollama logo
 import ollamaLogo from '/assets/ai-logos/ollama.svg';
 
 interface OllamaModel {
@@ -30,9 +28,6 @@ interface OllamaProviderFormProps {
   showModelError: boolean;
 }
 
-/**
- * Tool support badge component
- */
 function ToolSupportBadge({ status }: { status: ToolSupportStatus }) {
   const config = {
     supported: {
@@ -74,9 +69,6 @@ function ToolSupportBadge({ status }: { status: ToolSupportStatus }) {
   );
 }
 
-/**
- * Custom model selector with tool support indicators
- */
 function OllamaModelSelector({
   models,
   value,
@@ -89,12 +81,20 @@ function OllamaModelSelector({
   error: boolean;
 }) {
   const { t } = useTranslation('settings');
-  // Sort models: supported first, then unknown, then unsupported
   const sortedModels = [...models].sort((a, b) => {
     const order: Record<ToolSupportStatus, number> = { supported: 0, unknown: 1, unsupported: 2 };
     const aOrder = order[a.toolSupport || 'unknown'];
     const bOrder = order[b.toolSupport || 'unknown'];
     return aOrder - bOrder;
+  });
+
+  const selectorModels = sortedModels.map((model) => {
+    const toolSupport = model.toolSupport || 'unknown';
+    const toolIcon = toolSupport === 'supported' ? '✓' : toolSupport === 'unsupported' ? '✗' : '?';
+    return {
+      id: model.id,
+      name: `${model.name} ${toolIcon}`,
+    };
   });
 
   const selectedModel = models.find(m => m.id === value);
@@ -103,23 +103,13 @@ function OllamaModelSelector({
 
   return (
     <div>
-      <label className="mb-2 block text-sm font-medium text-foreground">{t('common.model')}</label>
-      <select
-        value={value || ''}
-        onChange={(e) => onChange(e.target.value)}
-        className={`w-full rounded-md border px-3 py-2.5 text-sm bg-background ${
-          error ? 'border-destructive' : 'border-input'
-        }`}
-      >
-        <option value="">{t('common.selectModel')}</option>
-        {sortedModels.map((model) => (
-          <option key={model.id} value={model.id}>
-            {model.name} {model.toolSupport === 'supported' ? '✓' : model.toolSupport === 'unsupported' ? '✗' : '?'}
-          </option>
-        ))}
-      </select>
+      <ModelSelector
+        models={selectorModels}
+        value={value}
+        onChange={onChange}
+        error={error}
+      />
 
-      {/* Warning for unsupported or unknown models */}
       {hasUnsupportedSelected && (
         <div className="mt-2 flex items-start gap-2 rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">
           <svg className="h-5 w-5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -142,10 +132,6 @@ function OllamaModelSelector({
             <p className="text-yellow-400/80 mt-1">{t('common.toolUnknownDetail')}</p>
           </div>
         </div>
-      )}
-
-      {error && !value && (
-        <p className="mt-1 text-sm text-destructive">{t('common.pleaseSelectModel')}</p>
       )}
     </div>
   );
@@ -211,7 +197,6 @@ export function OllamaProviderForm({
     }
   };
 
-  // Get models from connected provider or local state
   const models: OllamaModel[] = (connectedProvider?.availableModels || availableModels).map(m => ({
     id: m.id,
     name: m.name,
@@ -259,7 +244,6 @@ export function OllamaProviderForm({
               transition={settingsTransitions.enter}
               className="space-y-3"
             >
-              {/* Display saved server URL */}
               <div>
                 <label className="mb-2 block text-sm font-medium text-foreground">{t('ollama.serverUrl')}</label>
                 <input
@@ -272,7 +256,6 @@ export function OllamaProviderForm({
 
               <ConnectedControls onDisconnect={onDisconnect} />
 
-              {/* Model Selector with Tool Support */}
               <OllamaModelSelector
                 models={models}
                 value={connectedProvider?.selectedModelId || null}
@@ -280,7 +263,6 @@ export function OllamaProviderForm({
                 error={showModelError && !connectedProvider?.selectedModelId}
               />
 
-              {/* Tool support legend */}
               <div className="flex items-center gap-3 pt-2 text-xs text-muted-foreground">
                 <span className="flex items-center gap-1">
                   <ToolSupportBadge status="supported" />

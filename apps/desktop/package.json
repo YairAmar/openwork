@@ -1,6 +1,6 @@
 {
   "name": "@accomplish/desktop",
-  "version": "0.3.5",
+  "version": "0.3.8",
   "private": true,
   "type": "module",
   "description": "Accomplish Desktop App",
@@ -12,12 +12,12 @@
     "build": "tsc && vite build && node scripts/bundle-skills.cjs",
     "build:electron": "tsc && vite build && node scripts/package.cjs",
     "build:unpack": "tsc && vite build && node scripts/package.cjs --dir",
-    "package": "pnpm build && node scripts/package.cjs --mac --publish never",
-    "package:mac": "pnpm build && node scripts/package.cjs --mac --publish never",
-    "release": "pnpm build && node scripts/package.cjs --mac --publish always",
-    "release:mac": "pnpm build && node scripts/package.cjs --mac --publish always",
-    "package:win": "pnpm build && node scripts/package.cjs --win --x64 --publish never",
-    "release:win": "pnpm build && node scripts/package.cjs --win --x64 --publish always",
+    "package": "ACCOMPLISH_BUNDLED_MCP=1 pnpm build && node scripts/package.cjs --mac --publish never",
+    "package:mac": "ACCOMPLISH_BUNDLED_MCP=1 pnpm build && node scripts/package.cjs --mac --publish never",
+    "release": "ACCOMPLISH_BUNDLED_MCP=1 pnpm build && node scripts/package.cjs --mac --publish always",
+    "release:mac": "ACCOMPLISH_BUNDLED_MCP=1 pnpm build && node scripts/package.cjs --mac --publish always",
+    "package:win": "ACCOMPLISH_BUNDLED_MCP=1 pnpm build && node scripts/package.cjs --win --x64 --publish never",
+    "release:win": "ACCOMPLISH_BUNDLED_MCP=1 pnpm build && node scripts/package.cjs --win --x64 --publish always",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
@@ -40,7 +40,7 @@
     "test:local-agent": "npx tsx scripts/test-local-agent-cli.ts"
   },
   "dependencies": {
-    "@accomplish/shared": "workspace:*",
+    "@accomplish_ai/agent-core": "workspace:*",
     "@aws-sdk/client-bedrock": "^3.971.0",
     "@aws-sdk/credential-providers": "^3.971.0",
     "@azure/identity": "^4.13.0",
@@ -59,6 +59,7 @@
     "dotenv": "^17.2.3",
     "electron-store": "^8.2.0",
     "framer-motion": "^12.26.2",
+    "gray-matter": "^4.0.3",
     "i18next": "^25.7.4",
     "i18next-browser-languagedetector": "^8.2.0",
     "lucide-react": "^0.454.0",
@@ -87,9 +88,9 @@
     "@vitejs/plugin-react": "^4.3.4",
     "@vitest/coverage-v8": "^4.0.17",
     "autoprefixer": "^10.4.20",
-    "esbuild": "^0.24.2",
     "electron": "^35.2.1",
     "electron-builder": "^25.1.8",
+    "esbuild": "^0.24.2",
     "happy-dom": "^20.1.0",
     "jsdom": "^27.4.0",
     "postcss": "^8.4.49",
@@ -102,10 +103,10 @@
   },
   "build": {
     "npmRebuild": false,
-    "compression": "store",
+    "compression": "normal",
     "appId": "ai.accomplish.desktop",
-    "productName": "Openwork",
-    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "productName": "Accomplish (formerly Openwork)",
+    "artifactName": "Accomplish-${version}-${os}-${arch}.${ext}",
     "directories": {
       "output": "release",
       "buildResources": "resources"
@@ -121,7 +122,7 @@
       "node_modules/json-schema-typed/**",
       "node_modules/atomically/**",
       "node_modules/debounce-fn/**",
-      "!node_modules/@accomplish/**",
+      "!node_modules/@accomplish_ai/**",
       "!node_modules/opencode-darwin-*/**",
       "!node_modules/opencode-linux-*/**"
     ],
@@ -151,8 +152,8 @@
         "to": "locales"
       },
       {
-        "from": "skills",
-        "to": "skills",
+        "from": "../../packages/agent-core/mcp-tools",
+        "to": "mcp-tools",
         "filter": [
           "**/*",
           "!**/profiles/**",
@@ -164,12 +165,19 @@
           "!**/*.test.ts",
           "!**/vitest.config.ts"
         ]
+      },
+      {
+        "from": "bundled-skills",
+        "to": "bundled-skills",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "publish": {
       "provider": "github",
       "owner": "accomplish-ai",
-      "repo": "openwork"
+      "repo": "accomplish"
     },
     "mac": {
       "category": "public.app-category.productivity",
@@ -204,11 +212,16 @@
       "icon": "resources/icon.ico"
     },
     "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Openwork"
+      "shortcutName": "Accomplish",
+      "runAfterFinish": true,
+      "installerIcon": "resources/icon.ico",
+      "uninstallerIcon": "resources/icon.ico",
+      "deleteAppDataOnUninstall": false
     }
   }
 }

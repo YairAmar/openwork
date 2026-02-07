@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import type { Task, TaskStatus } from '@accomplish/shared';
+import type { Task, TaskStatus } from '@accomplish_ai/agent-core';
 
 // Create mock functions outside of mock factory
 const mockLoadTasks = vi.fn();
@@ -181,7 +181,7 @@ describe('Sidebar Integration', () => {
       );
 
       // Assert
-      const logo = screen.getByRole('img', { name: /openwork/i });
+      const logo = screen.getByRole('img', { name: /accomplish/i });
       expect(logo).toBeInTheDocument();
     });
 

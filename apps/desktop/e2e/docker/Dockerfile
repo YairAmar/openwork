@@ -30,14 +30,15 @@ WORKDIR /app
 
 # Copy package files first for better caching
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY packages/shared/package.json ./packages/shared/
+COPY packages/agent-core/package.json ./packages/agent-core/
 COPY apps/desktop/package.json ./apps/desktop/
 
 # Copy scripts directory (needed by root postinstall script)
 COPY scripts/ ./scripts/
 
-# Copy skills directories (needed by desktop postinstall script)
-COPY apps/desktop/skills ./apps/desktop/skills
+# Copy mcp-tools directories (needed by desktop postinstall script)
+# MCP tools are now in packages/agent-core/mcp-tools
+COPY packages/agent-core/mcp-tools ./packages/agent-core/mcp-tools
 
 # Copy scripts directory (needed by postinstall script)
 COPY apps/desktop/scripts ./apps/desktop/scripts
@@ -48,8 +49,8 @@ RUN pnpm install --frozen-lockfile
 # Copy source code
 COPY . .
 
-# Build the desktop app
-RUN pnpm -F @accomplish/desktop build
+# Build all packages (core must be built before desktop)
+RUN pnpm build
 
 # Set display for Xvfb
 ENV DISPLAY=:99

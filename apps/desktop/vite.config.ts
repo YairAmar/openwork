@@ -20,7 +20,7 @@ export default defineConfig(() => ({
         vite: {
           resolve: {
             alias: {
-              '@accomplish/shared': path.resolve(__dirname, '../../packages/shared/src'),
+              '@accomplish_ai/agent-core': path.resolve(__dirname, '../../packages/agent-core/src'),
             },
           },
           build: {
@@ -64,8 +64,8 @@ export default defineConfig(() => ({
       '@': path.resolve(__dirname, 'src/renderer'),
       '@main': path.resolve(__dirname, 'src/main'),
       '@renderer': path.resolve(__dirname, 'src/renderer'),
-      '@shared': path.resolve(__dirname, '../../packages/shared/src'),
-      '@accomplish/shared': path.resolve(__dirname, '../../packages/shared/src'),
+      '@accomplish_ai/agent-core/common': path.resolve(__dirname, '../../packages/agent-core/src/common'),
+      '@accomplish_ai/agent-core': path.resolve(__dirname, '../../packages/agent-core/src'),
     },
   },
   // Build the React renderer

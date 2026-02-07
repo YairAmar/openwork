@@ -5,8 +5,8 @@ import { useTranslation } from 'react-i18next';
 import { AnimatePresence, motion } from 'framer-motion';
 import { getAccomplish } from '@/lib/accomplish';
 import { settingsVariants, settingsTransitions } from '@/lib/animations';
-import type { ConnectedProvider, ZaiCredentials, ZaiRegion } from '@accomplish/shared';
-import { PROVIDER_META, DEFAULT_PROVIDERS, getDefaultModelForProvider } from '@accomplish/shared';
+import type { ConnectedProvider, ZaiCredentials, ZaiRegion } from '@accomplish_ai/agent-core/common';
+import { PROVIDER_META, DEFAULT_PROVIDERS, getDefaultModelForProvider } from '@accomplish_ai/agent-core/common';
 import {
   ModelSelector,
   ConnectButton,

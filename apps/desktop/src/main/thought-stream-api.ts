@@ -8,33 +8,23 @@
 
 import http from 'http';
 import type { BrowserWindow } from 'electron';
+import {
+  THOUGHT_STREAM_PORT,
+  createThoughtStreamHandler,
+  type ThoughtStreamAPI,
+  type ThoughtStreamEvent as ThoughtEvent,
+  type ThoughtStreamCheckpointEvent as CheckpointEvent,
+} from '@accomplish_ai/agent-core';
 
-export const THOUGHT_STREAM_PORT = 9228;
-
-// Event types
-export interface ThoughtEvent {
-  taskId: string;
-  content: string;
-  category: 'observation' | 'reasoning' | 'decision' | 'action';
-  agentName: string;
-  timestamp: number;
-}
-
-export interface CheckpointEvent {
-  taskId: string;
-  status: 'progress' | 'complete' | 'stuck';
-  summary: string;
-  nextPlanned?: string;
-  blocker?: string;
-  agentName: string;
-  timestamp: number;
-}
+// Re-export types and constant for backwards compatibility
+export { THOUGHT_STREAM_PORT };
+export type { ThoughtEvent, CheckpointEvent };
 
 // Store reference to main window
 let mainWindow: BrowserWindow | null = null;
 
-// Track active task IDs for validation
-const activeTaskIds = new Set<string>();
+// Singleton handler instance for task tracking and event validation
+const thoughtStreamHandler: ThoughtStreamAPI = createThoughtStreamHandler();
 
 /**
  * Initialize the thought stream API with dependencies
@@ -47,14 +37,14 @@ export function initThoughtStreamApi(window: BrowserWindow): void {
  * Register a task ID as active (called when task starts)
  */
 export function registerActiveTask(taskId: string): void {
-  activeTaskIds.add(taskId);
+  thoughtStreamHandler.registerTask(taskId);
 }
 
 /**
  * Unregister a task ID (called when task completes)
  */
 export function unregisterActiveTask(taskId: string): void {
-  activeTaskIds.delete(taskId);
+  thoughtStreamHandler.unregisterTask(taskId);
 }
 
 /**
@@ -98,7 +88,7 @@ export function startThoughtStreamServer(): http.Server {
 
     // Validate taskId exists and is active
     const taskId = data.taskId as string;
-    if (!taskId || !activeTaskIds.has(taskId)) {
+    if (!taskId || !thoughtStreamHandler.isTaskActive(taskId)) {
       // Fire-and-forget: return 200 even for unknown tasks
       res.writeHead(200);
       res.end();

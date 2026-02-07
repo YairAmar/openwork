@@ -1,84 +1,43 @@
-// apps/desktop/src/main/store/db.ts
-
-import Database from 'better-sqlite3';
 import { app } from 'electron';
 import path from 'path';
-import fs from 'fs';
-import { runMigrations } from './migrations';
+import {
+  getDatabase as coreGetDatabase,
+  initializeDatabase as coreInitializeDatabase,
+  closeDatabase as coreCloseDatabase,
+  resetDatabase as coreResetDatabase,
+  databaseExists as coreDatabaseExists,
+  isDatabaseInitialized,
+} from '@accomplish_ai/agent-core';
+import { importLegacyElectronStoreData } from './electronStoreImport';
 
-let _db: Database.Database | null = null;
-
-/**
- * Get the database file path based on environment.
- */
 export function getDatabasePath(): string {
-  const dbName = app.isPackaged ? 'openwork.db' : 'openwork-dev.db';
+  const dbName = app.isPackaged ? 'accomplish.db' : 'accomplish-dev.db';
   return path.join(app.getPath('userData'), dbName);
 }
 
-/**
- * Get or create the database connection.
- * Migrations are NOT run here - call runMigrations() separately after getting the database.
- */
-export function getDatabase(): Database.Database {
-  if (!_db) {
-    const dbPath = getDatabasePath();
-    console.log('[DB] Opening database at:', dbPath);
-
-    _db = new Database(dbPath);
-    _db.pragma('journal_mode = WAL');
-    _db.pragma('foreign_keys = ON');
-  }
-  return _db;
+export function getDatabase() {
+  return coreGetDatabase();
 }
 
-/**
- * Close the database connection.
- * Call this on app shutdown.
- */
 export function closeDatabase(): void {
-  if (_db) {
-    console.log('[DB] Closing database connection');
-    _db.close();
-    _db = null;
-  }
+  coreCloseDatabase();
 }
 
-/**
- * Reset the database by backing up and removing the current file.
- * Used for recovery from corruption.
- */
 export function resetDatabase(): void {
-  closeDatabase();
-
-  const dbPath = getDatabasePath();
-  if (fs.existsSync(dbPath)) {
-    const backupPath = `${dbPath}.corrupt.${Date.now()}`;
-    console.log('[DB] Backing up corrupt database to:', backupPath);
-    fs.renameSync(dbPath, backupPath);
-  }
-
-  // Also remove WAL and SHM files if they exist
-  const walPath = `${dbPath}-wal`;
-  const shmPath = `${dbPath}-shm`;
-  if (fs.existsSync(walPath)) fs.unlinkSync(walPath);
-  if (fs.existsSync(shmPath)) fs.unlinkSync(shmPath);
+  coreResetDatabase(getDatabasePath());
 }
 
-/**
- * Check if the database file exists.
- */
 export function databaseExists(): boolean {
-  return fs.existsSync(getDatabasePath());
+  return coreDatabaseExists(getDatabasePath());
 }
 
-/**
- * Initialize the database and run migrations.
- * Call this on app startup before any database access.
- * Throws FutureSchemaError if the database is from a newer app version.
- */
 export function initializeDatabase(): void {
-  const db = getDatabase();
-  runMigrations(db);
-  console.log('[DB] Database initialized and migrations complete');
+  if (!isDatabaseInitialized()) {
+    const db = coreInitializeDatabase({
+      databasePath: getDatabasePath(),
+      runMigrations: true,
+    });
+
+    importLegacyElectronStoreData(db);
+  }
 }

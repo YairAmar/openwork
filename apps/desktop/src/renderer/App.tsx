@@ -6,7 +6,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { isRunningInElectron, getAccomplish } from './lib/accomplish';
 import { springs, variants } from './lib/animations';
-import type { ProviderId } from '@accomplish/shared';
+import type { ProviderId } from '@accomplish_ai/agent-core/common';
 
 // Pages
 import HomePage from './pages/Home';

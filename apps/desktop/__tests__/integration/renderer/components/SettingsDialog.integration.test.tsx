@@ -16,7 +16,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import type { ApiKeyConfig } from '@accomplish/shared';
+import type { ApiKeyConfig } from '@accomplish_ai/agent-core';
 
 // Create mock functions for accomplish API
 const mockGetApiKeys = vi.fn();
@@ -159,9 +159,9 @@ describe('SettingsDialog Integration', () => {
       // Arrange & Act
       render(<SettingsDialog {...defaultProps} />);
 
-      // Assert - new SettingsDialog uses "Set up Openwork" as title
+      // Assert - new SettingsDialog uses "Set up Accomplish" as title
       await waitFor(() => {
-        expect(screen.getByText('Set up Openwork')).toBeInTheDocument();
+        expect(screen.getByText('Set up Accomplish')).toBeInTheDocument();
       });
     });
 
@@ -816,7 +816,7 @@ describe('SettingsDialog Integration', () => {
 
       // Assert
       await waitFor(() => {
-        expect(screen.getByText('Openwork')).toBeInTheDocument();
+        expect(screen.getByText('Accomplish')).toBeInTheDocument();
       });
     });
 
@@ -837,7 +837,7 @@ describe('SettingsDialog Integration', () => {
 
       // Assert
       await waitFor(() => {
-        const logo = screen.getByRole('img', { name: /openwork/i });
+        const logo = screen.getByRole('img', { name: /accomplish/i });
         expect(logo).toBeInTheDocument();
       });
     });
