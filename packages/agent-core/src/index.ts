@@ -192,6 +192,9 @@ export {
   setLiteLLMConfig,
   getLMStudioConfig,
   setLMStudioConfig,
+  getLanguage,
+  setLanguage,
+  type UILanguage,
 } from './storage/repositories/appSettings.js';
 
 // Provider settings repository functions

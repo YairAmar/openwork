@@ -151,7 +151,9 @@
   },
   "tabs": {
     "providers": "Providers",
-    "voiceInput": "Voice Input"
+    "skills": "Skills",
+    "voiceInput": "Voice Input",
+    "about": "About"
   },
   "zai": {
     "region": "Region",
@@ -190,7 +192,12 @@
     "title": "About",
     "version": "Version {{version}}",
     "description": "Openwork is a local computer-use AI agent for your Mac that reads your files, creates documents, and automates repetitive knowledge work—all open-source with your AI models of choice.",
-    "contact": "Any questions or feedback? Click here to contact us"
+    "contact": "Any questions or feedback? Click here to contact us",
+    "visitUs": "Visit us",
+    "haveQuestion": "Have a question?",
+    "versionLabel": "Version",
+    "loading": "Loading...",
+    "allRightsReserved": "Accomplish™ All rights reserved."
   },
   "warnings": {
     "noProviderReady": "No provider ready",
