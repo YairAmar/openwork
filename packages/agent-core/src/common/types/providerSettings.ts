@@ -145,7 +145,7 @@ export function getActiveProvider(settings: ProviderSettings | null | undefined)
 }
 
 export const DEFAULT_MODELS: Partial<Record<ProviderId, string>> = {
-  anthropic: 'anthropic/claude-opus-4-5',
+  anthropic: 'anthropic/claude-opus-4-6',
   openai: 'openai/gpt-5.2',
   google: 'google/gemini-3-pro-preview',
   xai: 'xai/grok-4',

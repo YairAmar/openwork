@@ -169,6 +169,14 @@ export const DEFAULT_PROVIDERS: ProviderConfig[] = [
         contextWindow: 200000,
         supportsVision: true,
       },
+      {
+        id: 'claude-opus-4-6',
+        displayName: 'Claude Opus 4.6',
+        provider: 'anthropic',
+        fullId: 'anthropic/claude-opus-4-6',
+        contextWindow: 200000,
+        supportsVision: true,
+      },
     ],
   },
   {
@@ -399,5 +407,5 @@ export const DEFAULT_PROVIDERS: ProviderConfig[] = [
 
 export const DEFAULT_MODEL: SelectedModel = {
   provider: 'anthropic',
-  model: 'anthropic/claude-opus-4-5',
+  model: 'anthropic/claude-opus-4-6',
 };
