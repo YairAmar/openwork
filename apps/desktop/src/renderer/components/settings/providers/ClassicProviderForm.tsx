@@ -66,11 +66,6 @@ export function ClassicProviderForm({
     }).then((result) => {
       if (result.success && result.models?.length) {
         setFetchedModels(result.models);
-        // Persist to connected provider so we don't re-fetch next time
-        accomplish.setConnectedProvider(providerId, {
-          ...connectedProvider!,
-          availableModels: result.models,
-        }).catch(console.error);
       }
     }).catch(console.error);
   }, [isConnected, providerId]);
