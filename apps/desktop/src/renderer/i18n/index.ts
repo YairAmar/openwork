@@ -10,13 +10,13 @@ import { initReactI18next } from 'react-i18next';
 import LanguageDetector from 'i18next-browser-languagedetector';
 
 // Static English locale imports — bundled by Vite, always available as fallback
-import enCommon from '../../../locales/en/common.json';
-import enHome from '../../../locales/en/home.json';
-import enSettings from '../../../locales/en/settings.json';
-import enExecution from '../../../locales/en/execution.json';
-import enHistory from '../../../locales/en/history.json';
-import enErrors from '../../../locales/en/errors.json';
-import enSidebar from '../../../locales/en/sidebar.json';
+import enCommon from '@locales/en/common.json';
+import enHome from '@locales/en/home.json';
+import enSettings from '@locales/en/settings.json';
+import enExecution from '@locales/en/execution.json';
+import enHistory from '@locales/en/history.json';
+import enErrors from '@locales/en/errors.json';
+import enSidebar from '@locales/en/sidebar.json';
 
 // Supported languages and namespaces
 export const SUPPORTED_LANGUAGES = ['en', 'zh-CN'] as const;
