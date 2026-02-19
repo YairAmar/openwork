@@ -80,10 +80,12 @@ export async function serve(options: ServeOptions = {}): Promise<DevBrowserServe
       context = await chromium.launchPersistentContext(chromeUserDataDir, {
         headless,
         channel: 'chrome',
+        viewport: null,
         ignoreDefaultArgs: ['--enable-automation'],
         args: [
           `--remote-debugging-port=${cdpPort}`,
           '--disable-blink-features=AutomationControlled',
+          '--window-size=1280,720',
         ],
       });
       usedSystemChrome = true;
@@ -100,8 +102,13 @@ export async function serve(options: ServeOptions = {}): Promise<DevBrowserServe
     console.log('Launching browser with Playwright Chromium...');
     context = await chromium.launchPersistentContext(playwrightUserDataDir, {
       headless,
+      viewport: null,
       ignoreDefaultArgs: ['--enable-automation'],
-      args: [`--remote-debugging-port=${cdpPort}`, '--disable-blink-features=AutomationControlled'],
+      args: [
+        `--remote-debugging-port=${cdpPort}`,
+        '--disable-blink-features=AutomationControlled',
+        '--window-size=1280,720',
+      ],
     });
     console.log('Browser launched with Playwright Chromium');
   }
@@ -152,7 +159,7 @@ export async function serve(options: ServeOptions = {}): Promise<DevBrowserServe
 
   app.post('/pages', async (req: Request, res: Response) => {
     const body = req.body as GetPageRequest;
-    const { name, viewport } = body;
+    const { name } = body;
 
     if (!name || typeof name !== 'string') {
       res.status(400).json({ error: 'name is required and must be a string' });
@@ -172,10 +179,6 @@ export async function serve(options: ServeOptions = {}): Promise<DevBrowserServe
     let entry = registry.get(name);
     if (!entry) {
       const page = await withTimeout(context.newPage(), 30000, 'Page creation timed out after 30s');
-
-      if (viewport) {
-        await page.setViewportSize(viewport);
-      }
 
       const targetId = await getTargetId(page);
       entry = { page, targetId };

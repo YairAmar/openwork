@@ -6,14 +6,8 @@ export interface ServeOptions {
   useSystemChrome?: boolean;
 }
 
-export interface ViewportSize {
-  width: number;
-  height: number;
-}
-
 export interface GetPageRequest {
   name: string;
-  viewport?: ViewportSize;
 }
 
 export interface GetPageResponse {

@@ -185,15 +185,13 @@ async function connectBuiltin(): Promise<Browser> {
   return b;
 }
 
-const DEFAULT_VIEWPORT = { width: 1280, height: 720 };
-
 async function getPageBuiltin(pageName?: string): Promise<Page> {
   const fullName = getFullPageName(pageName);
 
   const res = await fetchWithRetry(`${config.devBrowserUrl}/pages`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: fullName, viewport: DEFAULT_VIEWPORT }),
+    body: JSON.stringify({ name: fullName }),
   });
 
   if (!res.ok) {
